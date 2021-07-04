@@ -140,7 +140,7 @@ namespace Parallafka
                 if (this._handledMessagesNotYetCommitted.TryTake(out IKafkaMessage<TKey, TValue> handledMessage))
                 {
                     Queue<IKafkaMessage<TKey, TValue>> messagesNotYetCommitted = this._messagesNotYetCommittedByPartition[handledMessage.Offset.Partition];
-                    if (handledMessage == messagesNotYetCommitted.Peek())
+                    if (messagesNotYetCommitted.Count > 0 && handledMessage == messagesNotYetCommitted.Peek())
                     {
                         var messagesToCommit = new List<IKafkaMessage<TKey, TValue>>();
                         while (messagesNotYetCommitted.TryPeek(out IKafkaMessage<TKey, TValue> msg) && msg.WasHandled)
@@ -152,6 +152,18 @@ namespace Parallafka
                         // TODO: Retry
                         await this._consumer.CommitAsync(messagesToCommit.Select(m => m.Offset));
                     }
+
+                    if (this._messagesToHandleForKey.TryGetValue(handledMessage.Key, out Queue<IKafkaMessage<TKey, TValue>> messagesQueuedForKey))
+                    {
+                        if (messagesQueuedForKey == null || messagesQueuedForKey.Count == 0)
+                        {
+                            this._messagesToHandleForKey.Remove(handledMessage.Key);
+                        }
+                        else
+                        {
+                            this._messagesReadyForHandling.Add(messagesQueuedForKey.Dequeue());
+                        }
+                    }
                 }
             }
         }
@@ -162,6 +174,7 @@ namespace Parallafka
             {
                 while (!this.ShutdownToken.IsCancellationRequested)
                 {
+                    // TODO: Error handling
                     IKafkaMessage<TKey, TValue> message = await this._consumer.PollAsync(this.ShutdownToken);
                     this._polledMessageQueue.Add(message);
                 }
