@@ -7,5 +7,7 @@ namespace Parallafka.KafkaConsumer
         TValue Value { get; }
 
         IRecordOffset Offset { get; }
+
+        bool WasHandled { get; set; }
     }
 }

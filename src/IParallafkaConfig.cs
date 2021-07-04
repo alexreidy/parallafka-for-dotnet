@@ -1,10 +1,13 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Parallafka
 {
     public interface IParallafkaConfig
     {
+        CancellationToken ShutdownToken { get; }
+
         int MaxConcurrentHandlers { get; }
 
         /// <summary>

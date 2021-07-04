@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Parallafka.KafkaConsumer
@@ -11,7 +12,7 @@ namespace Parallafka.KafkaConsumer
     /// <typeparam name="TValue">The record value type.</typeparam>
     public interface IKafkaConsumer<TKey, TValue> : IAsyncDisposable
     {
-        Task<IKafkaMessage<TKey, TValue>> PollAsync();
+        Task<IKafkaMessage<TKey, TValue>> PollAsync(CancellationToken cancellationToken);
 
         Task CommitAsync(IEnumerable<IRecordOffset> offsets);
     }

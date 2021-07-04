@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Parallafka.KafkaConsumer.Implementations.Mock
@@ -15,7 +16,7 @@ namespace Parallafka.KafkaConsumer.Implementations.Mock
             throw new System.NotImplementedException();
         }
 
-        public Task<IKafkaMessage<TKey, TValue>> PollAsync()
+        public Task<IKafkaMessage<TKey, TValue>> PollAsync(CancellationToken cancellationToken)
         {
             throw new System.NotImplementedException();
         }
