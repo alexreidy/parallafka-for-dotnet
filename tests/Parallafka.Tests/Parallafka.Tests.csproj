@@ -20,7 +20,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Parallafka.csproj" />
+    <ProjectReference Include="..\..\src\Parallafka\Parallafka.csproj" />
   </ItemGroup>
 
 </Project>
