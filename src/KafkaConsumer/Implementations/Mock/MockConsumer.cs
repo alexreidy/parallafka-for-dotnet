@@ -45,7 +45,8 @@ namespace Parallafka.KafkaConsumer.Implementations.Mock
 
         public Task<IKafkaMessage<TKey, TValue>> PollAsync(CancellationToken cancellationToken)
         {
-            return Task.FromResult(this._topic.Dequeue());
+            this._topic.TryDequeue(out var msg);
+            return Task.FromResult(msg);
         }
     }
 }

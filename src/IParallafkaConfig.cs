@@ -10,6 +10,8 @@ namespace Parallafka
 
         int MaxConcurrentHandlers { get; }
 
+        // TODO: adaptive mode flag: optimize throughput by tuning thread count
+
         /// <summary>
         /// A single message can potentially keep a handler thread busy for an
         /// extended period after other "nearby" records have been handled, whether it's retrying or

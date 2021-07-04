@@ -176,7 +176,10 @@ namespace Parallafka
                 {
                     // TODO: Error handling
                     IKafkaMessage<TKey, TValue> message = await this._consumer.PollAsync(this.ShutdownToken);
-                    this._polledMessageQueue.Add(message);
+                    if (message != null)
+                    {
+                        this._polledMessageQueue.Add(message);
+                    }
                 }
             });
         }

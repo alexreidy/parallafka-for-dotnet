@@ -12,7 +12,7 @@ namespace Parallafka.KafkaConsumer
     /// <typeparam name="TValue">The record value type.</typeparam>
     public interface IKafkaConsumer<TKey, TValue> : IAsyncDisposable
     {
-        Task<IKafkaMessage<TKey, TValue>> PollAsync(CancellationToken cancellationToken);
+        Task<IKafkaMessage<TKey, TValue>> PollAsync(CancellationToken cancellationToken); // TODO: What's the contract as far as nulls
 
         Task CommitAsync(IEnumerable<IRecordOffset> offsets);
     }
