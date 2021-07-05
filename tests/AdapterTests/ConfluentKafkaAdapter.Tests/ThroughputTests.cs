@@ -11,7 +11,7 @@ using Xunit.Abstractions;
 
 namespace Parallafka.AdapterTests.ConfluentKafka
 {
-    public class ThroughputTests : ThroughputTestBase, IAsyncLifetime
+    public class ThroughputTests : ThroughputTestBase, IAsyncLifetime // TODO: Move to Parallafka.IntegrationTests
     {
         private readonly ClientConfig _clientConfig;
 
@@ -39,23 +39,17 @@ namespace Parallafka.AdapterTests.ConfluentKafka
 
         public async Task InitializeAsync()
         {
-            try
+            await this._adminClient.CreateTopicsAsync(new[]
             {
-                await this._adminClient.CreateTopicsAsync(new[]
+                new TopicSpecification()
                 {
-                    new TopicSpecification()
-                    {
-                        Name = this._topicName,
-                        NumPartitions = 11,
-                    },
-                }, new CreateTopicsOptions()
-                {
-                    RequestTimeout = TimeSpan.FromSeconds(9),
-                });
-            }
-            catch (CreateTopicsException e) when (e.Message.Contains("already exists"))
+                    Name = this._topicName,
+                    NumPartitions = 11,
+                },
+            }, new CreateTopicsOptions()
             {
-            }
+                RequestTimeout = TimeSpan.FromSeconds(9),
+            });
         }
 
         public Task DisposeAsync()

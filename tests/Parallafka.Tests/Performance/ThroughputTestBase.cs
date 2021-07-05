@@ -35,10 +35,12 @@ namespace Parallafka.Tests.Performance
             this._output.WriteLine($"Took {sw.ElapsedMilliseconds}ms to connect and publish");
             // Running these timers serially to be fair
             TimeSpan rawConsumerElapsed = await this.TimeRawSingleThreadedConsumerAsync();
-            this._output.WriteLine($"Raw consumer took {rawConsumerElapsed.TotalMilliseconds}");
+            string rawConsumerTimeMsg = $"Raw consumer took {rawConsumerElapsed.TotalMilliseconds}ms";
+            this._output.WriteLine(rawConsumerTimeMsg);
             TimeSpan parallafkaElapsed = await this.TimeParallafkaConsumerAsync();
-            this._output.WriteLine($"Parallafka consumer took {parallafkaElapsed.TotalMilliseconds}");
-            Assert.True(rawConsumerElapsed / parallafkaElapsed > 5);
+            string parallafkaTimeMsg = $"Parallafka consumer took {parallafkaElapsed.TotalMilliseconds}ms";
+            this._output.WriteLine(parallafkaTimeMsg);
+            Assert.True(rawConsumerElapsed / parallafkaElapsed > 5, $"{rawConsumerTimeMsg}; {parallafkaTimeMsg}");
         }
 
         private async Task<TimeSpan> TimeRawSingleThreadedConsumerAsync()
