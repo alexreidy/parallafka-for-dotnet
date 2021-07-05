@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -24,8 +25,8 @@ namespace Parallafka.Adapters.ConfluentKafka
             this._confluentConsumer.Commit(
                 offsets.Select(o => new TopicPartitionOffset(
                     this._topic,
-                    new Partition(o.Partition),
-                    new Offset(o.Offset))));
+                    o.Partition,
+                    o.Offset)));
             
             return Task.CompletedTask;
         }
@@ -38,7 +39,15 @@ namespace Parallafka.Adapters.ConfluentKafka
 
         public Task<IKafkaMessage<TKey, TValue>> PollAsync(CancellationToken cancellationToken)
         {
-            ConsumeResult<TKey, TValue> result = this._confluentConsumer.Consume(cancellationToken);
+            ConsumeResult<TKey, TValue> result;
+            try
+            {
+                result = this._confluentConsumer.Consume(cancellationToken);
+            }
+            catch (OperationCanceledException e)
+            {
+                return Task.FromResult((IKafkaMessage<TKey, TValue>)null);
+            }
             if (result.IsPartitionEOF)
             {
                 return Task.FromResult((IKafkaMessage<TKey, TValue>)null);

@@ -40,7 +40,7 @@ namespace Parallafka.KafkaConsumer.Implementations.Mock
 
         public ValueTask DisposeAsync()
         {
-            throw new System.NotImplementedException();
+            return ValueTask.CompletedTask;
         }
 
         public Task<IKafkaMessage<TKey, TValue>> PollAsync(CancellationToken cancellationToken)

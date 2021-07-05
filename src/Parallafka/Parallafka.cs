@@ -38,8 +38,8 @@ namespace Parallafka
         /// <summary>
         /// Maps partition number to a queue of the messages received from that partition.
         /// The front of the queue is the earliest uncommitted message. Messages are removed once committed.
-        /// It's safe to commit a message provided all earlier (lower-offset) messages have been marked
-        /// as ready to commit.
+        /// It's safe to commit a handled message provided all earlier (lower-offset) messages have also been marked
+        /// as handled.
         /// </summary>
         private readonly Dictionary<int, Queue<IKafkaMessage<TKey, TValue>>> _messagesNotYetCommittedByPartition;
 
