@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading;
@@ -10,15 +9,11 @@ using Xunit.Abstractions;
 
 namespace Parallafka.Tests.Performance
 {
-    public abstract class ThroughputTestBase
+    public abstract class ThroughputTestBase : KafkaTopicTestBase
     {
-        public virtual int RecordCount { get; } = 500;
+        protected virtual int RecordCount { get; } = 500;
 
         protected virtual int StartTimingAfterConsumingWarmupMessages { get; } = 25;
-
-        protected abstract IKafkaConsumer<string, string> GetTestTopicConsumer(string groupId);
-        
-        protected abstract Task PublishToTestTopicAsync(IEnumerable<IKafkaMessage<string, string>> messages);
 
         private ITestOutputHelper _output;
 
@@ -28,7 +23,7 @@ namespace Parallafka.Tests.Performance
         }
 
         [Fact]
-        public virtual async Task CanConsumeMuchFasterThanDefaultConsumerAsync()
+        public virtual async Task TestCanConsumeMuchFasterThanDefaultConsumerAsync()
         {
             var sw = Stopwatch.StartNew();
             await this.PublishTestMessagesAsync(this.RecordCount);
@@ -45,7 +40,7 @@ namespace Parallafka.Tests.Performance
 
         private async Task<TimeSpan> TimeRawSingleThreadedConsumerAsync()
         {
-            await using(IKafkaConsumer<string, string> consumer = this.GetTestTopicConsumer("rawConsumer"))
+            await using(IKafkaConsumer<string, string> consumer = await this.Topic.GetConsumerAsync("rawConsumer"))
             {
                 TimeSpan duration = await this.TimeConsumerAsync(consumeAllAsync: async (Func<IKafkaMessage<string, string>, Task> consumeAsync) =>
                 {
@@ -62,7 +57,7 @@ namespace Parallafka.Tests.Performance
 
         private async Task<TimeSpan> TimeParallafkaConsumerAsync()
         {
-            await using(IKafkaConsumer<string, string> consumer = this.GetTestTopicConsumer("parallafka"))
+            await using(IKafkaConsumer<string, string> consumer = await this.Topic.GetConsumerAsync("parallafka"))
             {
                 var cts = new CancellationTokenSource();
                 IParallafka<string, string> parallafka = new Parallafka<string, string>(
@@ -117,7 +112,7 @@ namespace Parallafka.Tests.Performance
 
         private Task PublishTestMessagesAsync(int count)
         {
-            return this.PublishToTestTopicAsync(
+            return this.Topic.PublishAsync(
                 Enumerable.Range(1, count).Select(i => new KafkaMessage<string, string>(
                     key: $"k{(i % 9 == 0 ? i - 1 : i)}",
                     value: $"Message {i}",
