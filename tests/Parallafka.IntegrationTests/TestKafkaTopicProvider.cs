@@ -40,12 +40,13 @@ namespace Parallafka.IntegrationTests
         {
             await this.CreateTopicIfNotExistsAsync();
 
-            var consumerBuilder = new ConsumerBuilder<string, string>(new ConsumerConfig(this._clientConfig)
-            {
-                GroupId = groupId,
-                AutoOffsetReset = AutoOffsetReset.Earliest,
-                EnableAutoCommit = false,
-            });
+            var consumerBuilder = new ConsumerBuilder<string, string>(
+                new ConsumerConfig(this._clientConfig)
+                {
+                    GroupId = groupId,
+                    AutoOffsetReset = AutoOffsetReset.Earliest,
+                    EnableAutoCommit = false,
+                });
             IConsumer<string, string> consumer = consumerBuilder.Build();
             
             consumer.Subscribe(this._topicName);

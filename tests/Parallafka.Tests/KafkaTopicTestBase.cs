@@ -1,4 +1,7 @@
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
+using Parallafka.KafkaConsumer;
 using Xunit;
 
 namespace Parallafka.Tests
@@ -19,6 +22,19 @@ namespace Parallafka.Tests
         public virtual Task DisposeAsync()
         {
             return this.Topic.DeleteAsync();
+        }
+
+        protected IEnumerable<IKafkaMessage<string, string>> GenerateTestMessages(int count)
+        {
+            return Enumerable.Range(1, count).Select(i => new KafkaMessage<string, string>(
+                    key: $"k{(i % 9 == 0 ? i - 1 : i)}",
+                    value: $"Message {i}",
+                    offset: null));
+        }
+
+        protected Task PublishTestMessagesAsync(int count)
+        {
+            return this.Topic.PublishAsync(this.GenerateTestMessages(count));
         }
     }
 }

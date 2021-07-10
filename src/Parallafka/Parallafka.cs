@@ -52,6 +52,8 @@ namespace Parallafka
         /// </summary>
         private readonly Dictionary<TKey, Queue<IKafkaMessage<TKey, TValue>>> _messagesToHandleForKey;
 
+        private bool _pollerThreadIsRunning = false;
+
         public Parallafka(IKafkaConsumer<TKey, TValue> consumer, IParallafkaConfig config)
         {
             this._consumer = consumer;
@@ -172,21 +174,46 @@ namespace Parallafka
         {
             Task.Run(async () =>
             {
-                while (!this.ShutdownToken.IsCancellationRequested)
+                this._pollerThreadIsRunning = true;
+                try
                 {
-                    // TODO: Error handling
-                    IKafkaMessage<TKey, TValue> message = await this._consumer.PollAsync(this.ShutdownToken);
-                    if (message != null)
+                    while (!this.ShutdownToken.IsCancellationRequested)
                     {
-                        this._polledMessageQueue.Add(message);
+                        // TODO: Error handling
+                        IKafkaMessage<TKey, TValue> message = await this._consumer.PollAsync(this.ShutdownToken);
+                        if (message != null)
+                        {
+                            this._polledMessageQueue.Add(message);
+                        }
                     }
+                }
+                catch (Exception e)
+                {
+                    // TODO: log
+                }
+                finally
+                {
+                    this._pollerThreadIsRunning = false;
                 }
             });
         }
 
-        public ValueTask DisposeAsync()
+        public async ValueTask DisposeAsync()
         {
-            throw new NotImplementedException();
+            this._shutdownCts.Cancel();
+            var timeoutTask = Task.Delay(10000);
+            while (this._pollerThreadIsRunning)
+            {
+                await Task.Delay(10);
+                if (timeoutTask.IsCompleted)
+                {
+                    throw new Exception("Timed out waiting for Parallafka poller thread to stop");
+                }
+            }
+
+            await this._consumer.DisposeAsync();
+
+            // TODO: wait for all handling to stop? probably not a great idea
         }
     }
 }

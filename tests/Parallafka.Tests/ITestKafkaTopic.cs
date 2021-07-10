@@ -4,7 +4,7 @@ using Parallafka.KafkaConsumer;
 
 namespace Parallafka.Tests
 {
-    public interface ITestKafkaTopic
+    public interface ITestKafkaTopic // TODO: Make Disposable
     {
         /// <summary>
         /// Returns a consumer instance for the given consumer group ID.

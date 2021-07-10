@@ -1,6 +1,5 @@
 using System;
 using System.Diagnostics;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Parallafka.KafkaConsumer;
@@ -50,7 +49,6 @@ namespace Parallafka.Tests.Performance
                         await consumeAsync(message);
                     }
                 });
-                await consumer.DisposeAsync();
                 return duration;
             }
         }
@@ -59,20 +57,18 @@ namespace Parallafka.Tests.Performance
         {
             await using(IKafkaConsumer<string, string> consumer = await this.Topic.GetConsumerAsync("parallafka"))
             {
-                var cts = new CancellationTokenSource();
-                IParallafka<string, string> parallafka = new Parallafka<string, string>(
+                await using(IParallafka<string, string> parallafka = new Parallafka<string, string>(
                     consumer,
                     new ParallafkaConfig()
                     {
                         MaxConcurrentHandlers = 7,
-                        ShutdownToken = cts.Token,
-                    });
-
-                TimeSpan duration = await this.TimeConsumerAsync(
-                    consumeAllAsync: parallafka.ConsumeAsync,
-                    onFinishedAsync: async () => cts.Cancel());
-                
-                return duration;
+                    }))
+                {
+                    TimeSpan duration = await this.TimeConsumerAsync(
+                        consumeAllAsync: parallafka.ConsumeAsync,
+                        onFinishedAsync: () => parallafka.DisposeAsync().AsTask());
+                    return duration;
+                }
             }
         }
 
@@ -83,7 +79,7 @@ namespace Parallafka.Tests.Performance
             int totalHandled = 0;
             bool isWarmup = true;
             Stopwatch sw = new();
-            var rng = new Random();
+            var rng = new Random(); // TODO: thread safety?
             await consumeAllAsync(async message =>
             {
                 if (isWarmup)
@@ -108,15 +104,6 @@ namespace Parallafka.Tests.Performance
                 }
             });
             return sw.Elapsed;
-        }
-
-        private Task PublishTestMessagesAsync(int count)
-        {
-            return this.Topic.PublishAsync(
-                Enumerable.Range(1, count).Select(i => new KafkaMessage<string, string>(
-                    key: $"k{(i % 9 == 0 ? i - 1 : i)}",
-                    value: $"Message {i}",
-                    offset: null)));
         }
     }
 }

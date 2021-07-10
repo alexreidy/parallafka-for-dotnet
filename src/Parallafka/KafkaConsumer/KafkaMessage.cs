@@ -2,7 +2,7 @@ namespace Parallafka.KafkaConsumer
 {
     public class KafkaMessage<TKey, TValue> : IKafkaMessage<TKey, TValue>
     {
-        public KafkaMessage(TKey key, TValue value, IRecordOffset offset)
+        public KafkaMessage(TKey key, TValue value, IRecordOffset offset = null)
         {
             this.Key = key;
             this.Value = value;
