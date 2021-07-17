@@ -32,9 +32,11 @@ namespace Parallafka.Tests
                     offset: null));
         }
 
-        protected Task PublishTestMessagesAsync(int count)
+        protected async Task<IEnumerable<IKafkaMessage<string, string>>> PublishTestMessagesAsync(int count)
         {
-            return this.Topic.PublishAsync(this.GenerateTestMessages(count));
+            var messages = this.GenerateTestMessages(count);
+            await this.Topic.PublishAsync(messages);
+            return messages;
         }
     }
 }

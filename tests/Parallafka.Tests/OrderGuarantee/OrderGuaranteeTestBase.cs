@@ -89,5 +89,11 @@ namespace Parallafka.Tests.OrderGuarantee
                 }
             }
         }
+
+        [Fact]
+        public async Task TestAllMessagesAreConsumedAsync()
+        {
+            //Assert.True(false);
+        }
     }
 }

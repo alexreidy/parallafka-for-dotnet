@@ -21,6 +21,11 @@ namespace Parallafka.IntegrationTests
 
         private bool _topicExists = false;
 
+        public Task InitializeAsync()
+        {
+            return this.CreateTopicIfNotExistsAsync();
+        }
+
         public TestKafkaTopicProvider(string topicName, ClientConfig clientConfig = null)
         {
             this._topicName = topicName;
@@ -46,6 +51,7 @@ namespace Parallafka.IntegrationTests
                     GroupId = groupId,
                     AutoOffsetReset = AutoOffsetReset.Earliest,
                     EnableAutoCommit = false,
+                    // EnablePartitionEof = true,
                 });
             IConsumer<string, string> consumer = consumerBuilder.Build();
             
@@ -67,6 +73,11 @@ namespace Parallafka.IntegrationTests
 
         public Task DeleteAsync()
         {
+            if (!this._topicExists)
+            {
+                return Task.CompletedTask;
+            }
+
             return this._adminClient.DeleteTopicsAsync(new[] { this._topicName });
         }
 

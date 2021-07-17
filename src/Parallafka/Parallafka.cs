@@ -103,6 +103,8 @@ namespace Parallafka
                 });
             }
 
+            await Task.Yield();
+
             while (!this.ShutdownToken.IsCancellationRequested)
             {
                 bool gotOne = this._polledMessageQueue.TryTake(out IKafkaMessage<TKey, TValue> message, millisecondsTimeout: 5);
@@ -184,6 +186,12 @@ namespace Parallafka
                         if (message != null)
                         {
                             this._polledMessageQueue.Add(message);
+                        }
+                        else
+                        {
+                            //this._polledMessageQueue.Add(null);//temp for testing test
+                            // TODO: Log error if not cancelled. This is a breach of contract.
+                            await Task.Delay(50);
                         }
                     }
                 }

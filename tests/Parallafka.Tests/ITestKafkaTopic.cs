@@ -6,6 +6,10 @@ namespace Parallafka.Tests
 {
     public interface ITestKafkaTopic // TODO: Make Disposable
     {
+        Task InitializeAsync();
+        
+        Task DeleteAsync();
+
         /// <summary>
         /// Returns a consumer instance for the given consumer group ID.
         /// </summary>
@@ -15,7 +19,5 @@ namespace Parallafka.Tests
         /// Publishes the given messages to the test topic in order.
         /// </summary>
         Task PublishAsync(IEnumerable<IKafkaMessage<string, string>> messages);
-
-        Task DeleteAsync();
     }
 }

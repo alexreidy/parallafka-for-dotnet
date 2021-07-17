@@ -37,24 +37,33 @@ namespace Parallafka.Adapters.ConfluentKafka
             return ValueTask.CompletedTask;
         }
 
-        public Task<IKafkaMessage<TKey, TValue>> PollAsync(CancellationToken cancellationToken)
+        public async Task<IKafkaMessage<TKey, TValue>> PollAsync(CancellationToken cancellationToken)
         {
             ConsumeResult<TKey, TValue> result;
             try
             {
-                result = this._confluentConsumer.Consume(cancellationToken);
+                var timesForPartition = new Dictionary<int, int>();
+                do
+                {
+                    result = this._confluentConsumer.Consume(cancellationToken);
+                    if (result.IsPartitionEOF)
+                    {
+                        await Task.Delay(50);
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+                while (true);
             }
             catch (OperationCanceledException e)
             {
-                return Task.FromResult((IKafkaMessage<TKey, TValue>)null);
-            }
-            if (result.IsPartitionEOF)
-            {
-                return Task.FromResult((IKafkaMessage<TKey, TValue>)null);
+                return null;
             }
             IKafkaMessage<TKey, TValue> msg = new KafkaMessage<TKey, TValue>(result.Message.Key, result.Message.Value,
                 new RecordOffset(result.Partition, result.Offset));
-            return Task.FromResult(msg);
+            return msg;
         }
     }
 }

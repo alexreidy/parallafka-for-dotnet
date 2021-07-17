@@ -44,7 +44,7 @@ namespace Parallafka.Tests.Performance
                 TimeSpan duration = await this.TimeConsumerAsync(consumeAllAsync: async (Func<IKafkaMessage<string, string>, Task> consumeAsync) =>
                 {
                     IKafkaMessage<string, string> message;
-                    while ((message = await consumer.PollAsync(new CancellationTokenSource(100).Token)) != null)
+                    while ((message = await consumer.PollAsync(new CancellationTokenSource(5000).Token)) != null)
                     {
                         await consumeAsync(message);
                     }
@@ -79,7 +79,7 @@ namespace Parallafka.Tests.Performance
             int totalHandled = 0;
             bool isWarmup = true;
             Stopwatch sw = new();
-            var rng = new Random(); // TODO: thread safety?
+            var rngs = new ThreadSafeRandom();
             await consumeAllAsync(async message =>
             {
                 if (isWarmup)
@@ -92,7 +92,11 @@ namespace Parallafka.Tests.Performance
                 }
                 else
                 {
-                    await Task.Delay(TimeSpan.FromMilliseconds(80 + rng.Next(40)));
+                    await rngs.BorrowAsync(async rng =>
+                    {
+                        await Task.Delay(TimeSpan.FromMilliseconds(80 + rng.Next(40)));
+                    });
+                    
                     if (Interlocked.Increment(ref totalHandled) == this.RecordCount)
                     {
                         sw.Stop();
@@ -103,6 +107,11 @@ namespace Parallafka.Tests.Performance
                     }
                 }
             });
+
+            if (totalHandled < this.RecordCount)
+            {
+                throw new Exception($"Only consumed {totalHandled} of {this.RecordCount}. Is PollAsync returning null?");
+            }
             return sw.Elapsed;
         }
     }

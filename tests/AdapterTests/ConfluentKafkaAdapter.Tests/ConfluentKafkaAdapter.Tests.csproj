@@ -23,6 +23,7 @@
     <ProjectReference Include="..\..\..\src\Parallafka\Parallafka.csproj" />
     <ProjectReference Include="..\..\..\src\Adapters\ConfluentKafkaAdapter\ConfluentKafkaAdapter.csproj" />
     <ProjectReference Include="..\..\Parallafka.Tests\Parallafka.Tests.csproj" />
+    <ProjectReference Include="..\..\Parallafka.IntegrationTests\Parallafka.IntegrationTests.csproj" />
   </ItemGroup>
 
 </Project>
