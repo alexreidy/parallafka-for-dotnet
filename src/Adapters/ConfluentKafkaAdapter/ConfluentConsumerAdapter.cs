@@ -37,12 +37,14 @@ namespace Parallafka.Adapters.ConfluentKafka
             return ValueTask.CompletedTask;
         }
 
+
+
         public async Task<IKafkaMessage<TKey, TValue>> PollAsync(CancellationToken cancellationToken)
         {
+            await Task.Yield();
             ConsumeResult<TKey, TValue> result;
             try
             {
-                var timesForPartition = new Dictionary<int, int>();
                 do
                 {
                     result = this._confluentConsumer.Consume(cancellationToken);

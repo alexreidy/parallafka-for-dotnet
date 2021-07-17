@@ -20,9 +20,9 @@ namespace Parallafka.AdapterTests.ConfluentKafkaAdapter.Tests
         }
 
         [Fact]
-        public override Task RawConsumerHangsAtPartitionEndsTillNewMessageAsync()
+        public override Task RawConsumerHangsAtPartitionEndsTillNewMessageOrCancellationAsync()
         {
-            return base.RawConsumerHangsAtPartitionEndsTillNewMessageAsync();
+            return base.RawConsumerHangsAtPartitionEndsTillNewMessageOrCancellationAsync();
         }
     }
 }

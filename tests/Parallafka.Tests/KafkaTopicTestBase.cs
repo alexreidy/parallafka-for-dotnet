@@ -24,17 +24,17 @@ namespace Parallafka.Tests
             return this.Topic.DeleteAsync();
         }
 
-        protected IEnumerable<IKafkaMessage<string, string>> GenerateTestMessages(int count)
+        protected IEnumerable<IKafkaMessage<string, string>> GenerateTestMessages(int count, int startNum = 1)
         {
-            return Enumerable.Range(1, count).Select(i => new KafkaMessage<string, string>(
+            return Enumerable.Range(startNum, count).Select(i => new KafkaMessage<string, string>(
                     key: $"k{(i % 9 == 0 ? i - 1 : i)}",
                     value: $"Message {i}",
                     offset: null));
         }
 
-        protected async Task<IEnumerable<IKafkaMessage<string, string>>> PublishTestMessagesAsync(int count)
+        protected async Task<IEnumerable<IKafkaMessage<string, string>>> PublishTestMessagesAsync(int count, int startNum = 1)
         {
-            var messages = this.GenerateTestMessages(count);
+            var messages = this.GenerateTestMessages(count, startNum);
             await this.Topic.PublishAsync(messages);
             return messages;
         }

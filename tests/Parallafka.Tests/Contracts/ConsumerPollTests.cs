@@ -14,8 +14,6 @@ namespace Parallafka.Tests.Contracts
     {
         private volatile bool _consumerShouldNotBeHandlingAnyMessages = false;
 
-        private volatile bool _handledAllFirstBatchMessages = false;
-
         [Fact]
         public virtual async Task ConsumerHangsAtPartitionEndsTillNewMessageAsync()
         {
@@ -26,14 +24,17 @@ namespace Parallafka.Tests.Contracts
                     MaxConcurrentHandlers = 7,
                 }))
             {
-                await this.AssertConsumerHangsAtPartitionEndsTillNewMessageAsync(parallafka.ConsumeAsync);
+                await this.AssertConsumerHangsAtPartitionEndsTillNewMessageAsync(
+                    consumeTopicAsync: parallafka.ConsumeAsync,
+                    stopConsumerAsync: () => parallafka.DisposeAsync().AsTask());
             }
         }
 
         [Fact]
-        public virtual async Task RawConsumerHangsAtPartitionEndsTillNewMessageAsync()
+        public virtual async Task RawConsumerHangsAtPartitionEndsTillNewMessageOrCancellationAsync()
         {
-            var cts = new CancellationTokenSource(25000);
+            bool receivedNullMsg = false;
+            var cts = new CancellationTokenSource(3 * 60_000);
             await using(IKafkaConsumer<string, string> consumer = await this.Topic.GetConsumerAsync("rawConsumer"))
             {
                 await this.AssertConsumerHangsAtPartitionEndsTillNewMessageAsync(consumeTopicAsync: async handleAsync =>
@@ -43,16 +44,24 @@ namespace Parallafka.Tests.Contracts
                         IKafkaMessage<string, string> message = await consumer.PollAsync(cts.Token);
                         if (message == null)
                         {
+                            receivedNullMsg = true;
                             break;
                         }
                         await handleAsync(message);
                     }
+                }, stopConsumerAsync: async () =>
+                {
+                    Assert.False(receivedNullMsg);
+                    cts.Cancel();
                 });
+                
+                Assert.True(receivedNullMsg);
             }
         }
 
         private async Task AssertConsumerHangsAtPartitionEndsTillNewMessageAsync(
-            Func<Func<IKafkaMessage<string, string>, Task>, Task> consumeTopicAsync)
+            Func<Func<IKafkaMessage<string, string>, Task>, Task> consumeTopicAsync,
+            Func<Task> stopConsumerAsync)
         {
             int nFirstBatchMessagesPublished = 50;
             int nSecondBatchMessagesPublished = 30;
@@ -120,29 +129,27 @@ namespace Parallafka.Tests.Contracts
                     {
                         // Wait and make sure nothing unexpected and contract-breaching
                         // comes through after all records have been consumed.
-                        await Task.Delay(7000);
-                        Assert.Equal(nFirstBatchMessagesPublished, messagesHandled.Count);
-                        Assert.DoesNotContain(null, messagesHandled);
+                        await Task.Delay(5000);
                     }
 
                     RunAssertionsFromOtherThreads();
-
-                    if (!this._consumerShouldNotBeHandlingAnyMessages)
-                    {
-                        throw new Exception("Retrying");
-                    }
+                    Assert.Equal(expectedHandledMsgCount, messagesHandled.Count);
+                    Assert.DoesNotContain(null, messagesHandled);
                 },
                 retryDelay: TimeSpan.FromMilliseconds(80),
-                timeout: TimeSpan.FromSeconds(25));
+                timeout: TimeSpan.FromSeconds(45));
             }
 
             await WaitForAllMessagesAndAssertNothingElseIsHandledAfterDelayAsync(
                 expectedHandledMsgCount: nFirstBatchMessagesPublished);
 
             this._consumerShouldNotBeHandlingAnyMessages = false;
-            await this.PublishTestMessagesAsync(nSecondBatchMessagesPublished);
+            await this.PublishTestMessagesAsync(nSecondBatchMessagesPublished, startNum: nFirstBatchMessagesPublished + 1);
             await WaitForAllMessagesAndAssertNothingElseIsHandledAfterDelayAsync(
                 expectedHandledMsgCount: nFirstBatchMessagesPublished + nSecondBatchMessagesPublished);
+
+            await stopConsumerAsync();
+            await consumerTask;
         }
 
         private async Task RetryUntilAsync(Func<Task> assertionAsync, TimeSpan retryDelay, TimeSpan timeout)
@@ -153,6 +160,7 @@ namespace Parallafka.Tests.Contracts
                 try
                 {
                     await assertionAsync.Invoke();
+                    return;
                 }
                 catch (Exception)
                 {

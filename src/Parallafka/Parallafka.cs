@@ -189,7 +189,6 @@ namespace Parallafka
                         }
                         else
                         {
-                            //this._polledMessageQueue.Add(null);//temp for testing test
                             // TODO: Log error if not cancelled. This is a breach of contract.
                             await Task.Delay(50);
                         }
