@@ -69,11 +69,5 @@ namespace Parallafka.Tests.OrderGuarantee
 
             consumptionVerifier.AssertConsumedAllSentMessagesProperly();
         }
-
-        [Fact]
-        public async Task TestAllMessagesAreConsumedAsync()
-        {
-            //Assert.True(false);
-        }
     }
 }

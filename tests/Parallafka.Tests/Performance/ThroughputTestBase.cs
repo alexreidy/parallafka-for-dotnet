@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Parallafka.KafkaConsumer;
+using Parallafka.Tests.OrderGuarantee;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -13,6 +15,8 @@ namespace Parallafka.Tests.Performance
         protected virtual int RecordCount { get; } = 500;
 
         protected virtual int StartTimingAfterConsumingWarmupMessages { get; } = 25;
+
+        private IEnumerable<IKafkaMessage<string, string>> _sentMessages { get; set; }
 
         private ITestOutputHelper _output;
 
@@ -25,7 +29,7 @@ namespace Parallafka.Tests.Performance
         public virtual async Task TestCanConsumeMuchFasterThanDefaultConsumerAsync()
         {
             var sw = Stopwatch.StartNew();
-            await this.PublishTestMessagesAsync(this.RecordCount);
+            this._sentMessages = await this.PublishTestMessagesAsync(this.RecordCount);
             this._output.WriteLine($"Took {sw.ElapsedMilliseconds}ms to connect and publish");
             // Running these timers serially to be fair
             TimeSpan rawConsumerElapsed = await this.TimeRawSingleThreadedConsumerAsync();
@@ -76,12 +80,16 @@ namespace Parallafka.Tests.Performance
             Func<Func<IKafkaMessage<string, string>, Task>, Task> consumeAllAsync,
             Func<Task> onFinishedAsync = null)
         {
+            var consumptionVerifier = new ConsumptionVerifier();
+            consumptionVerifier.AddSentMessages(this._sentMessages);
+
             int totalHandled = 0;
             bool isWarmup = true;
             Stopwatch sw = new();
             var rngs = new ThreadSafeRandom();
             await consumeAllAsync(async message =>
             {
+                consumptionVerifier.AddConsumedMessages(new[] { message });
                 if (isWarmup)
                 {
                     if (Interlocked.Increment(ref totalHandled) == this.StartTimingAfterConsumingWarmupMessages)
@@ -99,7 +107,7 @@ namespace Parallafka.Tests.Performance
                     
                     if (Interlocked.Increment(ref totalHandled) == this.RecordCount) // todo: use assertion showing each individual message was handled.
                     {
-                        sw.Stop();
+                        sw.Stop(); // TODO: this should happen after all commits
                         if (onFinishedAsync != null)
                         {
                             await onFinishedAsync();
@@ -112,6 +120,9 @@ namespace Parallafka.Tests.Performance
             {
                 throw new Exception($"Only consumed {totalHandled} of {this.RecordCount}. Is PollAsync returning null?");
             }
+
+            consumptionVerifier.AssertConsumedAllSentMessagesProperly();
+
             return sw.Elapsed;
         }
     }
