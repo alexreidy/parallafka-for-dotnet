@@ -31,7 +31,7 @@ namespace Parallafka.Tests.Performance
             TimeSpan rawConsumerElapsed = await this.TimeRawSingleThreadedConsumerAsync();
             string rawConsumerTimeMsg = $"Raw consumer took {rawConsumerElapsed.TotalMilliseconds}ms";
             this._output.WriteLine(rawConsumerTimeMsg);
-            TimeSpan parallafkaElapsed = await this.TimeParallafkaConsumerAsync();
+            TimeSpan parallafkaElapsed = await this.TimeParallafkaConsumerAsync(); // todo: include the shutdown and don't be done until everything is committed!
             string parallafkaTimeMsg = $"Parallafka consumer took {parallafkaElapsed.TotalMilliseconds}ms";
             this._output.WriteLine(parallafkaTimeMsg);
             Assert.True(rawConsumerElapsed / parallafkaElapsed > 5, $"{rawConsumerTimeMsg}; {parallafkaTimeMsg}");
@@ -97,7 +97,7 @@ namespace Parallafka.Tests.Performance
                         await Task.Delay(TimeSpan.FromMilliseconds(80 + rng.Next(40)));
                     });
                     
-                    if (Interlocked.Increment(ref totalHandled) == this.RecordCount)
+                    if (Interlocked.Increment(ref totalHandled) == this.RecordCount) // todo: use assertion showing each individual message was handled.
                     {
                         sw.Stop();
                         if (onFinishedAsync != null)

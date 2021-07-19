@@ -31,7 +31,7 @@ namespace Parallafka.Tests.OrderGuarantee
             int totalMessagesSent = 0;
             for (; totalMessagesSent < 3000; totalMessagesSent++)
             {
-                if (rng.NextDouble() < 0.1)
+                if (rng.NextDouble() < 0.1) // TODO: Make this better and sure to test what we want
                 {
                     currentKey = Guid.NewGuid().ToString();
                     keys.Add(currentKey);
@@ -47,24 +47,16 @@ namespace Parallafka.Tests.OrderGuarantee
 
             Task publishTask = this.Topic.PublishAsync(messagesToSend);
 
-            var messagesReceivedByKey = new ConcurrentDictionary<string, ConcurrentQueue<IKafkaMessage<string, string>>>();
+            var consumptionVerifier = new ConsumptionVerifier();
+            consumptionVerifier.AddSentMessages(messagesToSend);
+
             int totalReceived = 0;
             await parallafka.ConsumeAsync(async msg =>
             {
                 var rng = new Random();
                 await Task.Delay(rng.Next(55 + rng.Next(40)));
-                messagesReceivedByKey.AddOrUpdate(msg.Key,
-                    addValueFactory: k =>
-                    {
-                        var queueForKey = new ConcurrentQueue<IKafkaMessage<string, string>>();
-                        queueForKey.Enqueue(msg);
-                        return queueForKey;
-                    },
-                    updateValueFactory: (k, queueForKey) =>
-                    {
-                        queueForKey.Enqueue(msg);
-                        return queueForKey;
-                    });
+
+                consumptionVerifier.AddConsumedMessages(new[] { msg });
 
                 if (Interlocked.Increment(ref totalReceived) == totalMessagesSent)
                 {
@@ -75,19 +67,7 @@ namespace Parallafka.Tests.OrderGuarantee
             await publishTask;
             Assert.Equal(totalMessagesSent, totalReceived);
 
-            foreach (var kvp in messagesReceivedByKey)
-            {
-                int prevMsgNum = -1;
-                foreach (IKafkaMessage<string, string> message in kvp.Value)
-                {
-                    Assert.Equal(kvp.Key, message.Key);
-                    
-                    int msgNum = int.Parse(message.Value);
-                    Assert.True(msgNum > prevMsgNum);
-
-                    prevMsgNum = msgNum;
-                }
-            }
+            consumptionVerifier.AssertConsumedAllSentMessagesProperly();
         }
 
         [Fact]

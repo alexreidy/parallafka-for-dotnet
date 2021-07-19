@@ -34,7 +34,7 @@ namespace Parallafka.Tests.Contracts
         public virtual async Task RawConsumerHangsAtPartitionEndsTillNewMessageOrCancellationAsync()
         {
             bool receivedNullMsg = false;
-            var cts = new CancellationTokenSource(3 * 60_000);
+            var cts = new CancellationTokenSource(60_000);
             await using(IKafkaConsumer<string, string> consumer = await this.Topic.GetConsumerAsync("rawConsumer"))
             {
                 await this.AssertConsumerHangsAtPartitionEndsTillNewMessageAsync(consumeTopicAsync: async handleAsync =>

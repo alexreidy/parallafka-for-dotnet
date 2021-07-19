@@ -54,6 +54,8 @@ namespace Parallafka
 
         private bool _pollerThreadIsRunning = false;
 
+        private bool _mainLoopIsRunning = false;
+
         public Parallafka(IKafkaConsumer<TKey, TValue> consumer, IParallafkaConfig config)
         {
             this._consumer = consumer;
@@ -103,9 +105,11 @@ namespace Parallafka
                 });
             }
 
-            await Task.Yield();
+            this._mainLoopIsRunning = true;
 
-            while (!this.ShutdownToken.IsCancellationRequested)
+            await Task.Yield();
+            
+            while (!(this.ShutdownToken.IsCancellationRequested && this._handledMessagesNotYetCommitted.Count == 0))
             {
                 bool gotOne = this._polledMessageQueue.TryTake(out IKafkaMessage<TKey, TValue> message, millisecondsTimeout: 5);
                 if (gotOne)
@@ -170,6 +174,9 @@ namespace Parallafka
                     }
                 }
             }
+
+            this._mainLoopIsRunning = false;
+            Console.WriteLine("out of loop");
         }
 
         private void StartKafkaPollerThread()
@@ -218,7 +225,22 @@ namespace Parallafka
                 }
             }
 
-            await this._consumer.DisposeAsync();
+            ValueTask disposeConsumerTask = this._consumer.DisposeAsync();
+
+            Console.WriteLine("poller thread done");
+
+            timeoutTask = Task.Delay(15000); // todo: configurable? No timeout if just finishing up commits TODO TODO TODO
+            while (this._mainLoopIsRunning)
+            {
+                await Task.Delay(10);
+                if (timeoutTask.IsCompleted)
+                {
+                    throw new Exception("Timed out waiting for Parallafka main loop to stop");
+                }
+            }
+
+            await disposeConsumerTask;
+            Console.WriteLine("consumer disposed");
 
             // TODO: wait for all handling to stop? probably not a great idea
         }

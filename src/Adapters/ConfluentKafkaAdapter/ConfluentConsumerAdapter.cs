@@ -37,8 +37,6 @@ namespace Parallafka.Adapters.ConfluentKafka
             return ValueTask.CompletedTask;
         }
 
-
-
         public async Task<IKafkaMessage<TKey, TValue>> PollAsync(CancellationToken cancellationToken)
         {
             await Task.Yield();
