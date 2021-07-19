@@ -31,7 +31,7 @@ namespace Parallafka.Tests.OrderGuarantee
             int totalMessagesSent = 0;
             for (; totalMessagesSent < 3000; totalMessagesSent++)
             {
-                if (rng.NextDouble() < 0.1) // TODO: Make this better and sure to test what we want
+                if (rng.NextDouble() < 0.07)
                 {
                     currentKey = Guid.NewGuid().ToString();
                     keys.Add(currentKey);
@@ -40,8 +40,19 @@ namespace Parallafka.Tests.OrderGuarantee
                 {
                     currentKey = keys[rng.Next(keys.Count)];
                 }
+
+                string key = currentKey;
+
+                // Add some noise within the burst of currentKey
+                if (rng.NextDouble() < 0.2)
+                {
+                    key = Guid.NewGuid().ToString();
+                } else if (rng.NextDouble() < 0.2 && keys.Count > 1)
+                {
+                    key = keys[keys.Count - 2];
+                }
                 messagesToSend.Add(new KafkaMessage<string, string>(
-                    key: currentKey,
+                    key: key,
                     value: totalMessagesSent.ToString()));
             }
 
