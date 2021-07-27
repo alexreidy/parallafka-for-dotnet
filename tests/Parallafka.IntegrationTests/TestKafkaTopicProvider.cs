@@ -41,7 +41,7 @@ namespace Parallafka.IntegrationTests
             this._producer = producerBuilder.Build();
         }
 
-        public async Task<IKafkaConsumer<string, string>> GetConsumerAsync(string groupId)
+        public async Task<KafkaConsumerSpy<string, string>> GetConsumerAsync(string groupId)
         {
             await this.CreateTopicIfNotExistsAsync();
 
@@ -56,7 +56,8 @@ namespace Parallafka.IntegrationTests
             IConsumer<string, string> consumer = consumerBuilder.Build();
             
             consumer.Subscribe(this._topicName);
-            return new ConfluentConsumerAdapter<string, string>(consumer, this._topicName);
+            var adapter = new ConfluentConsumerAdapter<string, string>(consumer, this._topicName);
+            return new KafkaConsumerSpy<string, string>(adapter);
         }
 
         public async Task PublishAsync(IEnumerable<IKafkaMessage<string, string>> messages)

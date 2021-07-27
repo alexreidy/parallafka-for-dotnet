@@ -13,7 +13,7 @@ namespace Parallafka.Tests
         /// <summary>
         /// Returns a consumer instance for the given consumer group ID.
         /// </summary>
-        Task<IKafkaConsumer<string, string>> GetConsumerAsync(string groupId);
+        Task<KafkaConsumerSpy<string, string>> GetConsumerAsync(string groupId);
         
         /// <summary>
         /// Publishes the given messages to the test topic in order.

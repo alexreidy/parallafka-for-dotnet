@@ -16,9 +16,19 @@ namespace Parallafka
 
         private readonly IParallafkaConfig _config;
 
-        private CancellationTokenSource _shutdownCts = new CancellationTokenSource();
+        private readonly CancellationTokenSource _pollerShutdownCts = new();
 
-        private CancellationToken ShutdownToken => this._shutdownCts.Token;
+        private bool _pollerIsRunning = false;
+
+        private readonly CancellationTokenSource _handlerShutdownCts = new();
+
+        private int _nHandlerThreadsRunning = 0;
+
+        private bool _handlerThreadsAreRunning => this._nHandlerThreadsRunning > 0;
+
+        private readonly CancellationTokenSource _controllerShutdownCts = new();
+
+        private bool _controllerIsRunning = false;
 
         /// <summary>
         /// A bounded buffer for messages polled from Kafka.
@@ -52,10 +62,6 @@ namespace Parallafka
         /// </summary>
         private readonly Dictionary<TKey, Queue<IKafkaMessage<TKey, TValue>>> _messagesToHandleForKey;
 
-        private bool _pollerThreadIsRunning = false;
-
-        private bool _mainLoopIsRunning = false;
-
         public Parallafka(IKafkaConsumer<TKey, TValue> consumer, IParallafkaConfig config)
         {
             this._consumer = consumer;
@@ -67,54 +73,20 @@ namespace Parallafka
             this._handledMessagesNotYetCommitted = new BlockingCollection<IKafkaMessage<TKey, TValue>>();
             this._messagesToHandleForKey = new Dictionary<TKey, Queue<IKafkaMessage<TKey, TValue>>>();
             this._messagesNotYetCommittedByPartition = new Dictionary<int, Queue<IKafkaMessage<TKey, TValue>>>();
-
-            if (this._config.ShutdownToken != null)
-            {
-                this._config.ShutdownToken.Register(() =>
-                {
-                    this._shutdownCts.Cancel();
-                });
-            }
         }
 
         public async Task ConsumeAsync(Func<IKafkaMessage<TKey, TValue>, Task> consumeAsync)
         {
             this.StartKafkaPollerThread();
+            this.StartHandlerThreads(consumeAsync);
 
-            for (int i = 0; i < this._config.MaxConcurrentHandlers; i++)
-            {
-                Task.Run(async () =>
-                {
-                    while (!this.ShutdownToken.IsCancellationRequested)
-                    {
-                        IKafkaMessage<TKey, TValue> message = this._messagesReadyForHandling.Take(this.ShutdownToken);
-                        try
-                        {
-                            await consumeAsync(message);
-                        }
-                        catch (Exception e)
-                        {
-                            // TODO: Injected logger
-                            Console.WriteLine(e);
-                            // TODO: User is responsible for handling errors but should we do anything else here?
-                        }
-                        
-                        message.WasHandled = true;
-                        this._handledMessagesNotYetCommitted.Add(message);
-                    }
-                });
-            }
-
-            this._mainLoopIsRunning = true;
-
+            this._controllerIsRunning = true;
             await Task.Yield();
-            
-            while (!(this.ShutdownToken.IsCancellationRequested && this._handledMessagesNotYetCommitted.Count == 0))
+            while (!this._handlerShutdownCts.IsCancellationRequested || this._handlerThreadsAreRunning)
             {
                 bool gotOne = this._polledMessageQueue.TryTake(out IKafkaMessage<TKey, TValue> message, millisecondsTimeout: 5);
                 if (gotOne)
                 {
-                    // TODO: Optimize
                     bool aMessageWithThisKeyIsCurrentlyBeingHandled = this._messagesToHandleForKey.TryGetValue(message.Key,
                         out Queue<IKafkaMessage<TKey, TValue>> messagesToHandleForKey);
                     if (aMessageWithThisKeyIsCurrentlyBeingHandled)
@@ -129,8 +101,10 @@ namespace Parallafka
                     }
                     else
                     {
-                        // Add the key to indicate that a message with the key is being handled
+                        // Add the key to indicate that a message with the key is being handled (see above)
                         // so we know to queue up any additional messages with the key.
+                        // Without this line, FIFO same-key handling order is not enforced.
+                        // Remove it to test the tests.
                         this._messagesToHandleForKey[message.Key] = null;
 
                         this._messagesReadyForHandling.Add(message);
@@ -145,9 +119,12 @@ namespace Parallafka
                     messagesInPartition.Enqueue(message);
                 }
 
+                // do we drop messages here or never commit?? lol - how about a commit test or a few. Show that we never jump ahead and erroneously commit unhandled msgs
                 if (this._handledMessagesNotYetCommitted.TryTake(out IKafkaMessage<TKey, TValue> handledMessage))
                 {
                     Queue<IKafkaMessage<TKey, TValue>> messagesNotYetCommitted = this._messagesNotYetCommittedByPartition[handledMessage.Offset.Partition];
+
+                    // what if empty?? even possible? this feels like it can break
                     if (messagesNotYetCommitted.Count > 0 && handledMessage == messagesNotYetCommitted.Peek())
                     {
                         var messagesToCommit = new List<IKafkaMessage<TKey, TValue>>();
@@ -155,6 +132,7 @@ namespace Parallafka
                         {
                             messagesToCommit.Add(msg);
                             messagesNotYetCommitted.Dequeue();
+                            // remove from _handledMessagesNotYetCommitted or does it just drop those?
                         }
 
                         // TODO: Retry
@@ -175,21 +153,60 @@ namespace Parallafka
                 }
             }
 
-            this._mainLoopIsRunning = false;
-            Console.WriteLine("out of loop");
+            this._controllerIsRunning = false;
+        }
+
+        private void StartHandlerThreads(Func<IKafkaMessage<TKey, TValue>, Task> consumeAsync)
+        {
+            for (int i = 0; i < this._config.MaxConcurrentHandlers; i++)
+            {
+                Task.Run(async () =>
+                {
+                    Interlocked.Increment(ref this._nHandlerThreadsRunning);
+
+                    while (!this._handlerShutdownCts.IsCancellationRequested)
+                    {
+                        IKafkaMessage<TKey, TValue> message = null;
+                        try
+                        {
+                            message = this._messagesReadyForHandling.Take(this._handlerShutdownCts.Token);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            break;
+                        }
+
+                        try
+                        {
+                            await consumeAsync(message);
+                        }
+                        catch (Exception e)
+                        {
+                            // TODO: Injected logger
+                            Console.WriteLine(e);
+                            // TODO: User is responsible for handling errors but should we do anything else here?
+                        }
+                        
+                        message.WasHandled = true;
+                        this._handledMessagesNotYetCommitted.Add(message);
+                    }
+
+                    Interlocked.Decrement(ref this._nHandlerThreadsRunning);
+                });
+            }
         }
 
         private void StartKafkaPollerThread()
         {
             Task.Run(async () =>
             {
-                this._pollerThreadIsRunning = true;
+                this._pollerIsRunning = true;
                 try
                 {
-                    while (!this.ShutdownToken.IsCancellationRequested)
+                    while (!this._pollerShutdownCts.IsCancellationRequested)
                     {
                         // TODO: Error handling
-                        IKafkaMessage<TKey, TValue> message = await this._consumer.PollAsync(this.ShutdownToken);
+                        IKafkaMessage<TKey, TValue> message = await this._consumer.PollAsync(this._pollerShutdownCts.Token);
                         if (message != null)
                         {
                             this._polledMessageQueue.Add(message);
@@ -207,42 +224,95 @@ namespace Parallafka
                 }
                 finally
                 {
-                    this._pollerThreadIsRunning = false;
+                    this._pollerIsRunning = false;
                 }
             });
         }
 
-        public async ValueTask DisposeAsync()
+        public ValueTask DisposeAsync()
         {
-            this._shutdownCts.Cancel();
-            var timeoutTask = Task.Delay(10000);
-            while (this._pollerThreadIsRunning)
-            {
-                await Task.Delay(10);
-                if (timeoutTask.IsCompleted)
-                {
-                    throw new Exception("Timed out waiting for Parallafka poller thread to stop");
-                }
-            }
-
-            ValueTask disposeConsumerTask = this._consumer.DisposeAsync();
-
-            Console.WriteLine("poller thread done");
-
-            timeoutTask = Task.Delay(15000); // todo: configurable? No timeout if just finishing up commits TODO TODO TODO
-            while (this._mainLoopIsRunning)
-            {
-                await Task.Delay(10);
-                if (timeoutTask.IsCompleted)
-                {
-                    throw new Exception("Timed out waiting for Parallafka main loop to stop");
-                }
-            }
-
-            await disposeConsumerTask;
-            Console.WriteLine("consumer disposed");
-
-            // TODO: wait for all handling to stop? probably not a great idea
+            return new GracefulShutdownDisposeStrategy(this, TimeSpan.FromSeconds(15)).DisposeAsync();
         }
+
+        class GracefulShutdownDisposeStrategy : IDisposeStrategy
+        {
+            private Parallafka<TKey, TValue> _parallafka;
+            private TimeSpan? _waitTimeout;
+
+            public GracefulShutdownDisposeStrategy(
+                Parallafka<TKey, TValue> parallafka,
+                TimeSpan? waitTimeout = null)
+            {
+                this._parallafka = parallafka;
+                this._waitTimeout = waitTimeout;
+            }
+
+            public async ValueTask DisposeAsync()
+            {
+                this._parallafka._handlerShutdownCts.Cancel();
+                this._parallafka._pollerShutdownCts.Cancel();
+
+                var timeoutTask = Task.Delay(this._waitTimeout ?? TimeSpan.MaxValue);
+                try
+                {
+                    await this.WaitForPollerToStopAsync(timeoutTask);
+                    await this.WaitForHandlersToStopAsync(timeoutTask);
+                    await this.WaitForControllerToStopAsync(timeoutTask);
+                }
+                catch (Exception)
+                {
+                    // TODO: log
+                    throw;
+                }
+                finally
+                {
+                    this._parallafka._controllerShutdownCts.Cancel();
+                    await this._parallafka._consumer.DisposeAsync();
+                }
+            }
+
+            private async Task WaitForPollerToStopAsync(Task timeoutTask)
+            {
+                while (this._parallafka._pollerIsRunning)
+                {
+                    await Task.Delay(10);
+                    if (timeoutTask.IsCompleted)
+                    {
+                        throw new Exception("Timed out waiting for poller to shut down");
+                    }
+                }
+            }
+
+            private async Task WaitForHandlersToStopAsync(Task timeoutTask)
+            {
+                while (this._parallafka._handlerThreadsAreRunning)
+                {
+                    await Task.Delay(10);
+                    if (timeoutTask.IsCompleted)
+                    {
+                        throw new Exception($"Timed out waiting for {this._parallafka._nHandlerThreadsRunning} handlers to finish and shut down");
+                    }
+                }
+            }
+
+            private async Task WaitForControllerToStopAsync(Task timeoutTask)
+            {
+                while (this._parallafka._controllerIsRunning)
+                {
+                    //this._parallafka._messagesNotYetCommittedByPartition // wait for empty pipes (commits) and then stop controller.
+
+                    await Task.Delay(10);
+                    if (timeoutTask.IsCompleted)
+                    {
+                        throw new Exception("Timed out waiting for Parallafka to shut down");
+                    }
+                }
+            }
+        }
+    }
+
+    interface IDisposeStrategy
+    {
+        ValueTask DisposeAsync();
     }
 }

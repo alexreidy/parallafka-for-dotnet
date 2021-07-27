@@ -71,7 +71,9 @@ namespace Parallafka.Tests.OrderGuarantee
 
                 if (Interlocked.Increment(ref totalReceived) == totalMessagesSent)
                 {
-                    await parallafka.DisposeAsync();
+                    // TODO: What's a good alternative to waiting on dispose from handler?
+                    // (if dispose waits on handlers to finish)
+                    Task.Run(parallafka.DisposeAsync);
                 }
             });
 

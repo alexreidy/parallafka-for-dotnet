@@ -10,7 +10,7 @@ using Xunit.Abstractions;
 
 namespace Parallafka.Tests.Performance
 {
-    public abstract class ThroughputTestBase : KafkaTopicTestBase
+    public abstract class ThroughputTestsBase : KafkaTopicTestBase
     {
         protected virtual int RecordCount { get; } = 500;
 
@@ -20,7 +20,7 @@ namespace Parallafka.Tests.Performance
 
         private ITestOutputHelper _output;
 
-        public ThroughputTestBase(ITestOutputHelper output)
+        public ThroughputTestsBase(ITestOutputHelper output)
         {
             this._output = output;
         }
@@ -70,7 +70,7 @@ namespace Parallafka.Tests.Performance
                 {
                     TimeSpan duration = await this.TimeConsumerAsync(
                         consumeAllAsync: parallafka.ConsumeAsync,
-                        onFinishedAsync: () => parallafka.DisposeAsync().AsTask());
+                        onFinishedAsync: () => Task.Run(parallafka.DisposeAsync));
                     return duration;
                 }
             }
@@ -105,7 +105,7 @@ namespace Parallafka.Tests.Performance
                         await Task.Delay(TimeSpan.FromMilliseconds(80 + rng.Next(40)));
                     });
                     
-                    if (Interlocked.Increment(ref totalHandled) == this.RecordCount) // todo: use assertion showing each individual message was handled.
+                    if (Interlocked.Increment(ref totalHandled) == this.RecordCount)
                     {
                         sw.Stop(); // TODO: this should happen after all commits
                         if (onFinishedAsync != null)

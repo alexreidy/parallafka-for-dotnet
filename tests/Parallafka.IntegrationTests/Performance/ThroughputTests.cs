@@ -7,7 +7,7 @@ using Xunit.Abstractions;
 
 namespace Parallafka.IntegrationTests.Performance
 {
-    public class ThroughputTests : ThroughputTestBase
+    public class ThroughputTests : ThroughputTestsBase
     {
         private readonly ITestKafkaTopic _topic;
 

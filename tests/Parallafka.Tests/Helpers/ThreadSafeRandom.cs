@@ -46,7 +46,7 @@ namespace Parallafka.Tests
                     {
                     }
                 }
-                this._pruneThreadIsRunning = true;
+                this._pruneThreadIsRunning = false;
             });
         }
 

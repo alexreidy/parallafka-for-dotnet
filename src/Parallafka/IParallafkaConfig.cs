@@ -1,13 +1,10 @@
 using System;
-using System.Threading;
 using System.Threading.Tasks;
 
 namespace Parallafka
 {
     public interface IParallafkaConfig
     {
-        CancellationToken ShutdownToken { get; }
-
         int MaxConcurrentHandlers { get; }
 
         // TODO: adaptive mode flag: optimize throughput by tuning thread count
