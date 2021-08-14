@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -13,11 +12,11 @@ namespace Parallafka.Tests.OrderGuarantee
         [Fact]
         public virtual async Task TestFifoOrderIsPreservedForSameKeyAsync()
         {
-            IKafkaConsumer<string, string> consumer = await this.Topic.GetConsumerAsync(
+            KafkaConsumerSpy<string, string> consumer = await this.Topic.GetConsumerAsync(
                 $"SameKeyOrderTest-{Guid.NewGuid().ToString()}");
 
             IParallafka<string, string> parallafka = new Parallafka<string, string>(consumer,
-                new ParallafkaConfig()
+                new ParallafkaConfig<string, string>()
                 {
                     MaxConcurrentHandlers = 7
                 });
@@ -65,7 +64,7 @@ namespace Parallafka.Tests.OrderGuarantee
             await parallafka.ConsumeAsync(async msg =>
             {
                 var rng = new Random();
-                await Task.Delay(rng.Next(55 + rng.Next(40)));
+                await Task.Delay(rng.Next(55 + rng.Next(40))); // TODO: remember to apply this in other tests. And use threadsaferandom
 
                 consumptionVerifier.AddConsumedMessages(new[] { msg });
 
@@ -73,7 +72,7 @@ namespace Parallafka.Tests.OrderGuarantee
                 {
                     // TODO: What's a good alternative to waiting on dispose from handler?
                     // (if dispose waits on handlers to finish)
-                    Task.Run(parallafka.DisposeAsync);
+                    Task.Run(parallafka.DisposeAsync); // TODO: dispose on exceptions
                 }
             });
 
@@ -81,6 +80,7 @@ namespace Parallafka.Tests.OrderGuarantee
             Assert.Equal(totalMessagesSent, totalReceived);
 
             consumptionVerifier.AssertConsumedAllSentMessagesProperly();
+            consumptionVerifier.AssertAllConsumedMessagesWereCommitted(consumer); // how can we make something that knows when a message has been committed before handler finished?
         }
     }
 }

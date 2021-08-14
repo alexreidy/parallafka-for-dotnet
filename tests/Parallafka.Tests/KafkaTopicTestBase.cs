@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Parallafka.KafkaConsumer;
 using Xunit;
@@ -38,5 +39,16 @@ namespace Parallafka.Tests
             await this.Topic.PublishAsync(messages);
             return messages;
         }
+
+        protected async Task PublishTestMessagesUntilCancelAsync(CancellationToken stopToken)
+        {
+            await Task.Yield();
+            int batchSize = 500;
+            for (int i = 0; !stopToken.IsCancellationRequested; i += batchSize)
+            {
+                await this.PublishTestMessagesAsync(batchSize, startNum: 1 + i);
+            }
+        }
+
     }
 }

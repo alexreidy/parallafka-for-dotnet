@@ -43,9 +43,9 @@ namespace Parallafka.Tests.Performance
 
         private async Task<TimeSpan> TimeRawSingleThreadedConsumerAsync()
         {
-            await using(IKafkaConsumer<string, string> consumer = await this.Topic.GetConsumerAsync("rawConsumer"))
+            await using(KafkaConsumerSpy<string, string> consumer = await this.Topic.GetConsumerAsync("rawConsumer"))
             {
-                TimeSpan duration = await this.TimeConsumerAsync(consumeAllAsync: async (Func<IKafkaMessage<string, string>, Task> consumeAsync) =>
+                TimeSpan duration = await this.TimeConsumerAsync(consumer, consumeAllAsync: async (Func<IKafkaMessage<string, string>, Task> consumeAsync) =>
                 {
                     IKafkaMessage<string, string> message;
                     while ((message = await consumer.PollAsync(new CancellationTokenSource(5000).Token)) != null)
@@ -59,16 +59,17 @@ namespace Parallafka.Tests.Performance
 
         private async Task<TimeSpan> TimeParallafkaConsumerAsync()
         {
-            await using(IKafkaConsumer<string, string> consumer = await this.Topic.GetConsumerAsync("parallafka"))
+            await using(KafkaConsumerSpy<string, string> consumer = await this.Topic.GetConsumerAsync("parallafka"))
             {
                 await using(IParallafka<string, string> parallafka = new Parallafka<string, string>(
                     consumer,
-                    new ParallafkaConfig()
+                    new ParallafkaConfig<string, string>()
                     {
                         MaxConcurrentHandlers = 7,
                     }))
                 {
                     TimeSpan duration = await this.TimeConsumerAsync(
+                        consumer: consumer,
                         consumeAllAsync: parallafka.ConsumeAsync,
                         onFinishedAsync: () => Task.Run(parallafka.DisposeAsync));
                     return duration;
@@ -77,6 +78,7 @@ namespace Parallafka.Tests.Performance
         }
 
         private async Task<TimeSpan> TimeConsumerAsync(
+            KafkaConsumerSpy<string, string> consumer,
             Func<Func<IKafkaMessage<string, string>, Task>, Task> consumeAllAsync,
             Func<Task> onFinishedAsync = null)
         {
@@ -122,6 +124,7 @@ namespace Parallafka.Tests.Performance
             }
 
             consumptionVerifier.AssertConsumedAllSentMessagesProperly();
+            consumptionVerifier.AssertAllConsumedMessagesWereCommitted(consumer);
 
             return sw.Elapsed;
         }

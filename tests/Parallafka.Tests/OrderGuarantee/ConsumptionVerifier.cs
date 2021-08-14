@@ -19,6 +19,7 @@ namespace Parallafka.Tests.OrderGuarantee
 
         private string UniqueIdFor(IKafkaMessage<string, string> message)
         {
+            // TODO: Override equals
             return $"{message.Key}-[ :) ]-{message.Value}";
         }
 
@@ -72,13 +73,23 @@ namespace Parallafka.Tests.OrderGuarantee
                 {
                     Assert.Equal(kvp.Key, message.Key);
                     
-                    //int msgNum = int.Parse(message.Value);
                     long offset = message.Offset.Offset;
-                    Assert.True(offset > prevMsgOffset);
+                    Assert.True(offset > prevMsgOffset, $"{offset} not > previous message offset {prevMsgOffset}"); // TODO: HOW DID THIS FAIL in order guarantee test
 
                     prevMsgOffset = offset;
 
                     Assert.True(this._sentMessageUniqueIds.Contains(UniqueIdFor(message)));
+                }
+            }
+        }
+
+        public void AssertAllConsumedMessagesWereCommitted(KafkaConsumerSpy<string, string> consumer)
+        {
+            foreach (var messagesForKey in this._consumedMessagesByKey.Values)
+            {
+                foreach (var message in messagesForKey)
+                {
+                    Assert.Contains(message.Offset, consumer.CommittedOffsets);
                 }
             }
         }

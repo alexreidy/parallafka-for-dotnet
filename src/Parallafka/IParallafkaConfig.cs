@@ -3,9 +3,11 @@ using System.Threading.Tasks;
 
 namespace Parallafka
 {
-    public interface IParallafkaConfig
+    public interface IParallafkaConfig<TKey, TValue>
     {
         int MaxConcurrentHandlers { get; }
+
+        Func<Parallafka<TKey, TValue>, IDisposeStrategy> DisposeStrategyProvider { get; }
 
         // TODO: adaptive mode flag: optimize throughput by tuning thread count
 

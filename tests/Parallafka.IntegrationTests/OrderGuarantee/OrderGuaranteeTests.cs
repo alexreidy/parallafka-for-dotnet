@@ -5,7 +5,7 @@ using Parallafka.Tests;
 using Parallafka.Tests.OrderGuarantee;
 using Xunit;
 
-namespace Parallafka.IntegrationTests.Performance
+namespace Parallafka.IntegrationTests.OrderGuarantee
 {
     public class OrderGuaranteeTests : OrderGuaranteeTestBase
     {

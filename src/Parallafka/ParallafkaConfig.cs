@@ -4,11 +4,12 @@ using System.Threading.Tasks;
 
 namespace Parallafka
 {
-    public class ParallafkaConfig : IParallafkaConfig
+    public class ParallafkaConfig<TKey, TValue> : IParallafkaConfig<TKey, TValue>
     {
-        public CancellationToken ShutdownToken { get; set; }
+        public Func<Parallafka<TKey, TValue>, IDisposeStrategy> DisposeStrategyProvider { get; set; } = self =>
+            new Parallafka<TKey, TValue>.GracefulShutdownDisposeStrategy(self, waitTimeout: TimeSpan.FromSeconds(30));
 
-        public int MaxConcurrentHandlers { get; set; }
+        public int MaxConcurrentHandlers { get; set; } = 3;
 
         public long? PauseConsumptionWhenUncommittedRecordCountExceeds { get; set; }
 

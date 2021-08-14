@@ -22,6 +22,7 @@ namespace Parallafka.Adapters.ConfluentKafka
 
         public Task CommitAsync(IEnumerable<IRecordOffset> offsets)
         {
+            // TODO: Does this not accept a CancellationToken? Roll our own?
             this._confluentConsumer.Commit(
                 offsets.Select(o => new TopicPartitionOffset(
                     this._topic,
@@ -55,7 +56,7 @@ namespace Parallafka.Adapters.ConfluentKafka
                         break;
                     }
                 }
-                while (true);
+                while (!cancellationToken.IsCancellationRequested);
             }
             catch (OperationCanceledException e)
             {

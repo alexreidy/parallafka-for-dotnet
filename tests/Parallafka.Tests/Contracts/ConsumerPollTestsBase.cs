@@ -19,7 +19,7 @@ namespace Parallafka.Tests.Contracts
         {
             await using(IKafkaConsumer<string, string> consumer = await this.Topic.GetConsumerAsync("parallafka"))
             await using(var parallafka = new Parallafka<string, string>(consumer,
-                new ParallafkaConfig()
+                new ParallafkaConfig<string, string>()
                 {
                     MaxConcurrentHandlers = 7,
                 }))

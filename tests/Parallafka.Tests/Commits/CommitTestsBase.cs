@@ -14,7 +14,7 @@ namespace Parallafka.Tests.Contracts
         {
             await using(KafkaConsumerSpy<string, string> consumer = await this.Topic.GetConsumerAsync("parallafka"))
             await using(var parallafka = new Parallafka<string, string>(consumer,
-                new ParallafkaConfig()
+                new ParallafkaConfig<string, string>()
                 {
                     MaxConcurrentHandlers = 7,
                 }))
@@ -24,6 +24,9 @@ namespace Parallafka.Tests.Contracts
                 {
                     consumed.Enqueue(msg);
                 });
+
+                // Hang an earlier message in partition; let newer msgs be handled.
+                // Show that nothing finished is committed until earliest is handled.
             }
         }
     }

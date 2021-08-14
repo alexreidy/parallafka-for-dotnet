@@ -14,7 +14,7 @@ namespace Parallafka
     {
         private readonly IKafkaConsumer<TKey, TValue> _consumer;
 
-        private readonly IParallafkaConfig _config;
+        private readonly IParallafkaConfig<TKey, TValue> _config;
 
         private readonly CancellationTokenSource _pollerShutdownCts = new();
 
@@ -62,7 +62,7 @@ namespace Parallafka
         /// </summary>
         private readonly Dictionary<TKey, Queue<IKafkaMessage<TKey, TValue>>> _messagesToHandleForKey;
 
-        public Parallafka(IKafkaConsumer<TKey, TValue> consumer, IParallafkaConfig config)
+        public Parallafka(IKafkaConsumer<TKey, TValue> consumer, IParallafkaConfig<TKey, TValue> config)
         {
             this._consumer = consumer;
             this._config = config;
@@ -82,9 +82,10 @@ namespace Parallafka
 
             this._controllerIsRunning = true;
             await Task.Yield();
-            while (!this._handlerShutdownCts.IsCancellationRequested || this._handlerThreadsAreRunning)
+            while (!this._controllerShutdownCts.IsCancellationRequested) // TODO
             {
-                bool gotOne = this._polledMessageQueue.TryTake(out IKafkaMessage<TKey, TValue> message, millisecondsTimeout: 5);
+                // TODO: Probably want to give CPU a break here
+                bool gotOne = this._polledMessageQueue.TryTake(out IKafkaMessage<TKey, TValue> message, millisecondsTimeout: 0);
                 if (gotOne)
                 {
                     bool aMessageWithThisKeyIsCurrentlyBeingHandled = this._messagesToHandleForKey.TryGetValue(message.Key,
@@ -93,6 +94,7 @@ namespace Parallafka
                     {
                         if (messagesToHandleForKey == null)
                         {
+
                             messagesToHandleForKey = new Queue<IKafkaMessage<TKey, TValue>>();
                             this._messagesToHandleForKey[message.Key] = messagesToHandleForKey;
                         }
@@ -119,26 +121,37 @@ namespace Parallafka
                     messagesInPartition.Enqueue(message);
                 }
 
-                // do we drop messages here or never commit?? lol - how about a commit test or a few. Show that we never jump ahead and erroneously commit unhandled msgs
                 if (this._handledMessagesNotYetCommitted.TryTake(out IKafkaMessage<TKey, TValue> handledMessage))
                 {
                     Queue<IKafkaMessage<TKey, TValue>> messagesNotYetCommitted = this._messagesNotYetCommittedByPartition[handledMessage.Offset.Partition];
 
-                    // what if empty?? even possible? this feels like it can break
                     if (messagesNotYetCommitted.Count > 0 && handledMessage == messagesNotYetCommitted.Peek())
                     {
                         var messagesToCommit = new List<IKafkaMessage<TKey, TValue>>();
-                        while (messagesNotYetCommitted.TryPeek(out IKafkaMessage<TKey, TValue> msg) && msg.WasHandled)
+                        while (messagesNotYetCommitted.TryPeek(out IKafkaMessage<TKey, TValue> msg) && msg.WasHandled) // RCs here?
                         {
                             messagesToCommit.Add(msg);
                             messagesNotYetCommitted.Dequeue();
-                            // remove from _handledMessagesNotYetCommitted or does it just drop those?
                         }
 
-                        // TODO: Retry
-                        await this._consumer.CommitAsync(messagesToCommit.Select(m => m.Offset));
+                        while (!this._controllerShutdownCts.IsCancellationRequested)
+                        {
+                            try
+                            {
+                                // TODO: inject CancelToken for hard-stop strategy?
+                                await this._consumer.CommitAsync(messagesToCommit.Select(m => m.Offset));
+                                break;
+                            }
+                            catch (Exception e)
+                            {
+                                // TODO: log, delay
+                                Console.WriteLine(e);
+                            }
+                        }
                     }
 
+                    // Is this safe as far as commits?
+                    // If there are any messages with the same key queued, make the next one available for handling.
                     if (this._messagesToHandleForKey.TryGetValue(handledMessage.Key, out Queue<IKafkaMessage<TKey, TValue>> messagesQueuedForKey))
                     {
                         if (messagesQueuedForKey == null || messagesQueuedForKey.Count == 0)
@@ -231,10 +244,36 @@ namespace Parallafka
 
         public ValueTask DisposeAsync()
         {
-            return new GracefulShutdownDisposeStrategy(this, TimeSpan.FromSeconds(15)).DisposeAsync();
+            return this._config.DisposeStrategyProvider.Invoke(this).DisposeAsync();
+            //return new HardStopDisposeStrategy(this).DisposeAsync();
+            //return new GracefulShutdownDisposeStrategy(this, TimeSpan.FromSeconds(15)).DisposeAsync();
         }
 
-        class GracefulShutdownDisposeStrategy : IDisposeStrategy
+        public class HardStopDisposeStrategy : IDisposeStrategy
+        {
+            private Parallafka<TKey, TValue> _parallafka;
+
+            public HardStopDisposeStrategy(Parallafka<TKey, TValue> parallafka)
+            {
+                this._parallafka = parallafka;
+            }
+
+            public async ValueTask DisposeAsync()
+            {
+                this._parallafka._handlerShutdownCts.Cancel();
+                this._parallafka._pollerShutdownCts.Cancel();
+                this._parallafka._controllerShutdownCts.Cancel();
+
+                while (this._parallafka._controllerIsRunning || this._parallafka._pollerIsRunning)
+                {
+                    await Task.Delay(10);
+                }
+
+                //await this._parallafka._consumer.DisposeAsync();todo
+            }
+        }
+
+        public class GracefulShutdownDisposeStrategy : IDisposeStrategy
         {
             private Parallafka<TKey, TValue> _parallafka;
             private TimeSpan? _waitTimeout;
@@ -252,7 +291,7 @@ namespace Parallafka
                 this._parallafka._handlerShutdownCts.Cancel();
                 this._parallafka._pollerShutdownCts.Cancel();
 
-                var timeoutTask = Task.Delay(this._waitTimeout ?? TimeSpan.MaxValue);
+                var timeoutTask = Task.Delay(this._waitTimeout ?? TimeSpan.FromMilliseconds(int.MaxValue)); // todo
                 try
                 {
                     await this.WaitForPollerToStopAsync(timeoutTask);
@@ -267,7 +306,7 @@ namespace Parallafka
                 finally
                 {
                     this._parallafka._controllerShutdownCts.Cancel();
-                    await this._parallafka._consumer.DisposeAsync();
+                    //await this._parallafka._consumer.DisposeAsync();todo
                 }
             }
 
@@ -297,9 +336,35 @@ namespace Parallafka
 
             private async Task WaitForControllerToStopAsync(Task timeoutTask)
             {
+                // wtf is this:
+
+                // Assuming handlers and poller have stopped.
                 while (this._parallafka._controllerIsRunning)
                 {
                     //this._parallafka._messagesNotYetCommittedByPartition // wait for empty pipes (commits) and then stop controller.
+
+                    if (this._parallafka._handledMessagesNotYetCommitted.Count == 0)
+                    {
+                        bool allZero = true;
+                        foreach (var kvp in this._parallafka._messagesNotYetCommittedByPartition)
+                        {
+                            // TODO: thread safety
+                            if (kvp.Value == null)
+                            {
+                                continue;
+                            }
+                            if (kvp.Value.Count != 0)
+                            {
+                                allZero = false;
+                                break;
+                            }
+                        }
+                        if (allZero)
+                        {
+                            this._parallafka._controllerShutdownCts.Cancel();
+                            return;
+                        }
+                    }
 
                     await Task.Delay(10);
                     if (timeoutTask.IsCompleted)
@@ -311,7 +376,7 @@ namespace Parallafka
         }
     }
 
-    interface IDisposeStrategy
+    public interface IDisposeStrategy
     {
         ValueTask DisposeAsync();
     }
