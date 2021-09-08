@@ -14,6 +14,9 @@ namespace Parallafka.Tests.Contracts
 {
     public abstract class CommitTestsBase : KafkaTopicTestBase
     {
+        // TODO: I'd like a test that goes longer over thousands of msgs and multiple random hangs and have a
+        // continuous detection assertion system that alerts if any msgs > hung msg are committed before hung msg is finished.
+
         [Fact]
         public virtual async Task MessagesAreNotComittedTillAllEarlierOnesAreHandledAsync()
         {
@@ -60,6 +63,7 @@ namespace Parallafka.Tests.Contracts
                         }
                         else
                         {
+                            // TODO: Why did I have these hang too?
                             if (msg.Offset.Offset > offsetOfMessageToHang)
                             {
                                 Interlocked.Increment(ref nHandlersHanging);

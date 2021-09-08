@@ -5,7 +5,13 @@ namespace Parallafka.Tests
 {
     public static class Wait
     {
-        public static async Task UntilAsync(string desiredStateDescription, Func<Task<bool>> predicateAsync, TimeSpan timeout, TimeSpan? retryDelay = null, Func<Task> onTimeoutAsync = null, Func<string> contextProvider = null)
+        public static async Task UntilAsync(
+            string desiredStateDescription,
+            Func<Task<bool>> predicateAsync,
+            TimeSpan timeout,
+            TimeSpan? retryDelay = null,
+            Func<Task> onTimeoutAsync = null,
+            Func<string> contextProvider = null)
         {
             var timeoutTask = Task.Delay(timeout);
             while (!timeoutTask.IsCompleted)
@@ -14,7 +20,7 @@ namespace Parallafka.Tests
                 {
                     return;
                 }
-                await Task.Delay(retryDelay ?? TimeSpan.FromMilliseconds(50));
+                await Task.Delay(retryDelay ?? TimeSpan.FromMilliseconds(150));
             }
 
             if (onTimeoutAsync != null)
@@ -31,29 +37,40 @@ namespace Parallafka.Tests
         public static Task UntilAsync(string desiredStateDescription, Func<Task> assertionAsync, TimeSpan timeout, TimeSpan? retryDelay = null)
         {
             Exception ex = null;
-            return UntilAsync(desiredStateDescription, async () =>
+            return UntilAsync(desiredStateDescription,
+                async () =>
+                {
+                    try
+                    {
+                        await assertionAsync.Invoke();
+                        return true;
+                    }
+                    catch (Exception e)
+                    {
+                        ex = e;
+                        return false;
+                    }
+                },
+                timeout,
+                retryDelay,
+                onTimeoutAsync: async () =>
+                {
+                    if (ex != null)
+                    {
+                        throw ex;
+                    }
+                    throw new Exception("Timed out waiting for: " + desiredStateDescription);
+                });
+        }
+
+        public static async Task ForTaskOrTimeoutAsync(Task task, TimeSpan timeout, Action onTimeout)
+        {
+            var timeoutTask = Task.Delay(timeout);
+            await Task.WhenAny(task, timeoutTask);
+            if (timeoutTask.IsCompleted && !task.IsCompleted)
             {
-                try
-                {
-                    await assertionAsync.Invoke();
-                    return true;
-                }
-                catch (Exception e)
-                {
-                    ex = e;
-                    return false;
-                }
-            },
-            timeout,
-            retryDelay,
-            onTimeoutAsync: async () =>
-            {
-                if (ex != null)
-                {
-                    throw ex;
-                }
-                throw new Exception("Timed out waiting for: " + desiredStateDescription);
-            });
+                onTimeout.Invoke();
+            }
         }
     }
 }
