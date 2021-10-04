@@ -48,6 +48,7 @@ namespace Parallafka.Tests.Shutdown
                     await Wait.UntilAsync("All consumed messages are committed",
                         async () =>
                         {
+                            Assert.True(disposeTask.IsCompletedSuccessfully);
                             verifier.AssertAllConsumedMessagesWereCommitted(consumer);
                         },
                         timeout: TimeSpan.FromSeconds(30));

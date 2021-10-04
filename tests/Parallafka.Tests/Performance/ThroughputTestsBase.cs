@@ -51,6 +51,7 @@ namespace Parallafka.Tests.Performance
                     while ((message = await consumer.PollAsync(new CancellationTokenSource(5000).Token)) != null)
                     {
                         await consumeAsync(message);
+                        await consumer.CommitAsync(new[] { message.Offset });
                     }
                 });
                 return duration;
