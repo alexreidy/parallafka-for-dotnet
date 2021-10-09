@@ -28,8 +28,6 @@ namespace Parallafka
 
         private readonly CancellationTokenSource _controllerHardStopCts = new();
 
-        private readonly CancellationTokenSource _controllerGracefulShutdownCts = new();
-
         private bool _controllerIsRunning = false;
 
         /// <summary>
@@ -84,12 +82,19 @@ namespace Parallafka
 
             this._controllerIsRunning = true;
             await Task.Yield();
-            while (!this._controllerHardStopCts.IsCancellationRequested) // TODO
+            while (!this._controllerHardStopCts.IsCancellationRequested)
             {
-                // TODO: Probably want to give CPU a break here
                 bool gotOne = this._polledMessageQueue.TryTake(out IKafkaMessage<TKey, TValue> message, millisecondsTimeout: 1);
                 if (gotOne)
                 {
+                    if (!this._messagesNotYetCommittedByPartition.TryGetValue(message.Offset.Partition,
+                        out Queue<IKafkaMessage<TKey, TValue>> messagesInPartition))
+                    {
+                        messagesInPartition = new Queue<IKafkaMessage<TKey, TValue>>();
+                        this._messagesNotYetCommittedByPartition[message.Offset.Partition] = messagesInPartition;
+                    }
+                    messagesInPartition.Enqueue(message);
+
                     bool aMessageWithThisKeyIsCurrentlyBeingHandled = this._messagesToHandleForKey.TryGetValue(message.Key,
                         out Queue<IKafkaMessage<TKey, TValue>> messagesToHandleForKey);
                     if (aMessageWithThisKeyIsCurrentlyBeingHandled)
@@ -109,26 +114,13 @@ namespace Parallafka
                         // Without this line, FIFO same-key handling order is not enforced.
                         // Remove it to test the tests.
                         this._messagesToHandleForKey[message.Key] = null;
-
                         this._messagesReadyForHandling.Add(message);
                     }
-
-                    if (!this._messagesNotYetCommittedByPartition.TryGetValue(message.Offset.Partition,
-                        out Queue<IKafkaMessage<TKey, TValue>> messagesInPartition))
-                    {
-                        messagesInPartition = new Queue<IKafkaMessage<TKey, TValue>>();
-                        this._messagesNotYetCommittedByPartition[message.Offset.Partition] = messagesInPartition;
-                    }
-                    messagesInPartition.Enqueue(message);
                 }
 
                 if (this._handledMessagesNotYetCommitted.TryTake(out IKafkaMessage<TKey, TValue> handledMessage))
                 {
-                    // need to decouple hmnyc from committing, at least when shutdown requested.
-                    // And we need to best-effort commit all we can. Then it should be clear we can shut down.
-
-                    // one concern is that msgsReady4handling may not contain all uncommitted msgs: couldn't they be dropped in handler after shutdown?
-                    Queue<IKafkaMessage<TKey, TValue>> messagesNotYetCommitted = this._messagesNotYetCommittedByPartition[handledMessage.Offset.Partition]; // so this has some while hmnyc does not. how?
+                    Queue<IKafkaMessage<TKey, TValue>> messagesNotYetCommitted = this._messagesNotYetCommittedByPartition[handledMessage.Offset.Partition];
 
                     if (messagesNotYetCommitted.Count > 0 && handledMessage == messagesNotYetCommitted.Peek())
                     {
@@ -139,10 +131,11 @@ namespace Parallafka
                             messagesNotYetCommitted.Dequeue();
                         }
 
-                        while (!this._controllerHardStopCts.IsCancellationRequested)
+                        while (!this._controllerHardStopCts.IsCancellationRequested && messagesToCommit.Count > 0)
                         {
                             try
                             {
+                                // TODO: Optimize commit frequency; make configurable.
                                 // TODO: inject CancelToken for hard-stop strategy?
                                 // Also, optimize by committing just the most recently handled msg in the partition
                                 // if possible, and update docs about the method's contract.
@@ -153,6 +146,7 @@ namespace Parallafka
                             {
                                 // TODO: log, delay
                                 Console.WriteLine(e);
+                                await Task.Delay(99);
                             }
                         }
                     }
@@ -170,53 +164,7 @@ namespace Parallafka
                             this._messagesReadyForHandling.Add(messagesQueuedForKey.Dequeue());
                         }
                     }
-
-                    if (this._controllerGracefulShutdownCts.IsCancellationRequested && this._messagesReadyForHandling.Count != 0)
-                    {
-                        // Handlers are stopped at this point. Because of the current upstream design, I have to
-                        // filter out the uncommitted messages that we now know will never be handled, so we know
-                        // which uncommitted messages to actually wait on.
-
-                        var unhandledMsgsToAbandon = new HashSet<IKafkaMessage<TKey, TValue>>();
-                        while (this._messagesReadyForHandling.TryTake(out var msgToAbandon))
-                        {
-                            unhandledMsgsToAbandon.Add(msgToAbandon);
-                        }
-
-                        foreach (var kvp in this._messagesToHandleForKey) // this is fighting a symptom...
-                        {
-                            if (kvp.Value != null && kvp.Value.Count != 0)
-                            {
-                                foreach (IKafkaMessage<TKey, TValue> msg in kvp.Value)
-                                {
-                                    unhandledMsgsToAbandon.Add(msg);
-                                }
-                            }
-                        }
-
-                        Dictionary<int, Queue<IKafkaMessage<TKey, TValue>>> msgsToCommitByPartition = new();
-                        foreach (var kvp in this._messagesNotYetCommittedByPartition)
-                        {
-                            Queue<IKafkaMessage<TKey, TValue>> msgsToCommit = new();
-                            msgsToCommitByPartition.Add(kvp.Key, msgsToCommit);
-                            var originalMsgsToCommit = kvp.Value;
-                            foreach (var msg in originalMsgsToCommit)
-                            {
-                                if (!unhandledMsgsToAbandon.Contains(msg))
-                                {
-                                    msgsToCommit.Enqueue(msg);
-                                }
-                            }
-                        }
-
-                        // Now without any unhandled and abandoned messages
-                        this._messagesNotYetCommittedByPartition = msgsToCommitByPartition; // what about shutdown code looking at this
-
-                    //         // might be gaps - some msgs not handled? or is it continuous in order- the handlers finish means each partition is continuous w/ finished records?
-                    //         // how do we know when it's safe to say we've committed all that have been handled or will ever be?
-                    }
                 }
-
             }
 
             this._controllerIsRunning = false;
@@ -298,8 +246,6 @@ namespace Parallafka
         public ValueTask DisposeAsync()
         {
             return this._config.DisposeStrategyProvider.Invoke(this).DisposeAsync();
-            //return new HardStopDisposeStrategy(this).DisposeAsync();
-            //return new GracefulShutdownDisposeStrategy(this, TimeSpan.FromSeconds(15)).DisposeAsync();
         }
 
         public class HardStopDisposeStrategy : IDisposeStrategy
@@ -322,7 +268,7 @@ namespace Parallafka
                     await Task.Delay(10);
                 }
 
-                //await this._parallafka._consumer.DisposeAsync();todo
+                await this._parallafka._consumer.DisposeAsync();
             }
         }
 
@@ -344,25 +290,23 @@ namespace Parallafka
                 this._parallafka._handlerShutdownCts.Cancel();
                 this._parallafka._pollerShutdownCts.Cancel();
                 
-                var timeoutTask = Task.Delay(this._waitTimeout ?? TimeSpan.FromMilliseconds(int.MaxValue)); // todo
+                var timeoutTask = Task.Delay(this._waitTimeout ?? TimeSpan.FromMilliseconds(int.MaxValue));
                 try
                 {
                     await this.WaitForPollerToStopAsync(timeoutTask);
                     await this.WaitForHandlersToStopAsync(timeoutTask);
-
-                    // The logic looking at this is coupled to handlers being stopped. TODO
-                    this._parallafka._controllerGracefulShutdownCts.Cancel();
                     await this.WaitForControllerToStopAsync(timeoutTask);
                 }
-                catch (Exception)
+                catch (Exception e)
                 {
+                    Console.WriteLine(e);
                     // TODO: log
                     throw;
                 }
                 finally
                 {
                     this._parallafka._controllerHardStopCts.Cancel();
-                    //await this._parallafka._consumer.DisposeAsync();todo
+                    //await this._parallafka._consumer.DisposeAsync();
                 }
             }
 
@@ -395,29 +339,10 @@ namespace Parallafka
                 // Assuming handlers and poller have stopped.
                 while (this._parallafka._controllerIsRunning)
                 {
-                    //this._parallafka._messagesNotYetCommittedByPartition // wait for empty pipes (commits) and then stop controller.
-
+                    // Wait for empty pipes (the to-commit queue) and then stop controller.
                     if (this._parallafka._handledMessagesNotYetCommitted.Count == 0)
                     {
-                        bool allZero = true;
-                        foreach (var kvp in this._parallafka._messagesNotYetCommittedByPartition)
-                        {
-                            // TODO: thread safety
-                            if (kvp.Value == null)
-                            {
-                                continue;
-                            }
-                            if (kvp.Value.Count != 0)
-                            {
-                                allZero = false;
-                                break;
-                            }
-                        }
-                        if (allZero)
-                        {
-                            this._parallafka._controllerHardStopCts.Cancel();
-                            return;
-                        }
+                        this._parallafka._controllerHardStopCts.Cancel();
                     }
 
                     await Task.Delay(10);

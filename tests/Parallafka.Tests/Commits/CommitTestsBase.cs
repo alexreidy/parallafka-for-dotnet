@@ -31,7 +31,7 @@ namespace Parallafka.Tests.Contracts
 
             int offsetOfMessageToHang = 12;
 
-            Task<IEnumerable<IKafkaMessage<string, string>>> publishTask = this.PublishTestMessagesAsync(400, duplicateKeys: false);
+            Task<IEnumerable<IKafkaMessage<string, string>>> publishTask = this.PublishTestMessagesAsync(400, duplicateKeys: true);
             await using(KafkaConsumerSpy<string, string> consumer = await this.Topic.GetConsumerAsync("parallafka"))
             await using(var parallafka = new Parallafka<string, string>(consumer, parallafkaConfig))
             {
@@ -96,7 +96,6 @@ namespace Parallafka.Tests.Contracts
                     timeout: TimeSpan.FromSeconds(15));
 
                 Assert.Equal(nConsumedInPartition, offsetOfMessageToHang);
-                await Task.Delay(2000);
 
                 await Wait.UntilAsync(
                     "Messages in the partition from offset 0 up to the first hung msg have been committed",

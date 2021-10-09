@@ -110,7 +110,6 @@ namespace Parallafka.Tests.Performance
                     
                     if (Interlocked.Increment(ref totalHandled) == this.RecordCount)
                     {
-                        sw.Stop(); // TODO: this should happen after all commits
                         if (onFinishedAsync != null)
                         {
                             await onFinishedAsync();
@@ -118,6 +117,8 @@ namespace Parallafka.Tests.Performance
                     }
                 }
             });
+
+            sw.Stop();
 
             if (totalHandled < this.RecordCount)
             {
