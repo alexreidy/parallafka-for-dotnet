@@ -45,6 +45,9 @@ namespace Parallafka.Tests.Shutdown
 
                     Task disposeTask = parallafka.DisposeAsync().AsTask();
 
+                    // TODO: Show that disposal doesn't complete until all in-progress messages are handled and committed.
+                    // And demonstrate the timeout works if they remain hanging.
+
                     await Wait.UntilAsync("All consumed messages are committed",
                         async () =>
                         {
@@ -65,92 +68,48 @@ namespace Parallafka.Tests.Shutdown
             });
         }
 
-        // [Fact]
-        // public virtual Task TestGracefulShutdownAsync()
-        // {
-        //     // TODO: Use the same CommitTest code to verify commit behavior here.
+        public virtual async Task TestHardStopShutdownAsync()
+        {
+            var parallafkaConfig = new ParallafkaConfig<string, string>()
+            {
+                MaxConcurrentHandlers = 10,
+                DisposeStrategyProvider = self => new Parallafka<string, string>.HardStopDisposeStrategy(self),
+            };
+            var consumer = await this.Topic.GetConsumerAsync("myConsumer");
+            var parallafka = new Parallafka<string, string>(consumer, parallafkaConfig);
+            // Not using `using` here in case these hang during disposal.
 
-        //     return this.PublishingTestMessagesContinuouslyAsync(async () =>
-        //     {
-        //         var parallafkaConfig = new ParallafkaConfig<string, string>()
-        //         {
-        //             MaxConcurrentHandlers = 10,
-        //             DisposeStrategyProvider = self => new Parallafka<string, string>.GracefulShutdownDisposeStrategy(self),
-        //         };
-        //         //await using(var consumer = await this.Topic.GetConsumerAsync("myConsumer"))
-        //         //await using(var parallafka = new Parallafka<string, string>(consumer, parallafkaConfig)) todo
-        //         var consumer = await this.Topic.GetConsumerAsync("myConsumer");
-        //         var parallafka = new Parallafka<string, string>(consumer, parallafkaConfig);
-        //         {
-        //             Task disposeTask = Task.CompletedTask;
-        //             int nHandlersHanging = 0;
-        //             var hangTcs = new TaskCompletionSource();
+            await this.PublishingTestMessagesContinuouslyAsync(async () =>
+            {
+                var consumedMessages = new ConcurrentBag<IKafkaMessage<string, string>>();
+                var rngs = new ThreadSafeRandom();
+                Task consumeTask = parallafka.ConsumeAsync(async msg =>
+                {
+                    await rngs.BorrowAsync(async rng =>
+                    {
+                        await Task.Delay(rng.Next(20));
+                    });
 
-        //             var hangingHandlerMessages = new ConcurrentBag<IKafkaMessage<string, string>>();
-        //             var consumedMessages = new ConcurrentBag<IKafkaMessage<string, string>>();
+                    if (msg.Offset.Partition == 0 && msg.Offset.Offset == 20)
+                    {
+                        await Task.Delay(TimeSpan.FromDays(365));
+                    }
 
-        //             //var verifier = new ConsumptionVerifier();
+                    consumedMessages.Add(msg);
+                });
 
-        //             var rngs = new ThreadSafeRandom();
+                await Wait.UntilAsync("Consumed a bunch of messages", async () => consumedMessages.Count > 250,
+                    timeout: TimeSpan.FromSeconds(45));
 
-        //             int nConsumed = 0;
-        //             Task consumeTask = parallafka.ConsumeAsync(async msg =>
-        //             {
-        //                 await rngs.BorrowAsync(async rng =>
-        //                 {
-        //                     await Task.Delay(rng.Next(15));
-        //                 });
-                        
-        //                 if (Interlocked.Increment(ref nConsumed) >= 120)
-        //                 {
-        //                     hangingHandlerMessages.Add(msg);
-        //                     Interlocked.Increment(ref nHandlersHanging);
-        //                     await hangTcs.Task;
-        //                 }
+                Task disposeTask = parallafka.DisposeAsync().AsTask();
+                await Wait.ForTaskOrTimeoutAsync(disposeTask, TimeSpan.FromSeconds(4),
+                    onTimeout: () => throw new Exception("Timed out waiting for disposeTask"));
 
-        //                 consumedMessages.Add(msg);
-        //             });
+                // One handler thread is hanging but DisposeAsync should still return almost immediately.
 
-        //             await Wait.UntilAsync("All handlers are hanging",
-        //                 async () => Assert.Equal(parallafkaConfig.MaxConcurrentHandlers, nHandlersHanging),
-        //                 timeout: TimeSpan.FromSeconds(66));
-
-        //             await Wait.UntilAsync("All expected offsets have been committed",
-        //                 async () =>
-        //                 {
-        //                     var expectedCommittedOffsets = consumedMessages.Select(m => m.Offset).ToHashSet();
-
-        //                     foreach (var offset in expectedCommittedOffsets)
-        //                     {
-        //                         Assert.Contains(offset, consumer.CommittedOffsets);
-        //                     }
-        //                 },
-        //                 timeout: TimeSpan.FromSeconds(10));
-                    
-
-        //             foreach (var offset in hangingHandlerMessages.Select(m => m.Offset))
-        //             {
-        //                 Assert.DoesNotContain(offset, consumer.CommittedOffsets);
-        //             }
-
-        //             disposeTask = parallafka.DisposeAsync().AsTask();
-
-        //             // somehow assert the task doesn't complete, that it's waiting for handlers...
-        //             // maybe just spy on the progress w/ internal props: what it's waiting on internally.
-        //             // Wait for that to happen here.
-
-        //             hangTcs.SetResult();
-
-        //             // sometimes hangs todo. when there are no msgs in _handledMessagesNotYetCommitted but tons in partition... ready for commits: _messagesNotYetCommittedByPartition
-
-        //             await Wait.ForTaskOrTimeoutAsync(consumeTask, TimeSpan.FromSeconds(15),
-        //                 onTimeout: () => throw new Exception("Timed out waiting for consumeTask"));
-
-        //             await Wait.ForTaskOrTimeoutAsync(disposeTask, TimeSpan.FromSeconds(15),
-        //                 onTimeout: () => throw new Exception("Timed out waiting for disposeTask"));
-        //         }
-        //     });
-        // }
+                // TODO: Expand test
+            });
+        }
 
         private async Task PublishingTestMessagesContinuouslyAsync(Func<Task> actAsync)
         {
