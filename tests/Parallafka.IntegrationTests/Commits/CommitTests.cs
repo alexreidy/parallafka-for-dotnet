@@ -1,11 +1,11 @@
 using System;
 using System.Threading.Tasks;
 using Parallafka.Tests;
-using Parallafka.Tests.Contracts;
+using Parallafka.Tests.Commits;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Parallafka.IntegrationTests.Performance
+namespace Parallafka.IntegrationTests.Commits
 {
     public class CommitTests : CommitTestsBase
     {

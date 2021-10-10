@@ -235,6 +235,7 @@ namespace Parallafka
                 catch (Exception e)
                 {
                     // TODO: log
+                    Console.WriteLine(e);
                 }
                 finally
                 {
@@ -287,14 +288,13 @@ namespace Parallafka
 
             public async ValueTask DisposeAsync()
             {
-                this._parallafka._handlerShutdownCts.Cancel();
-                this._parallafka._pollerShutdownCts.Cancel();
-                
                 var timeoutTask = Task.Delay(this._waitTimeout ?? TimeSpan.FromMilliseconds(int.MaxValue));
                 try
                 {
-                    await this.WaitForPollerToStopAsync(timeoutTask);
+                    this._parallafka._handlerShutdownCts.Cancel();
                     await this.WaitForHandlersToStopAsync(timeoutTask);
+                    this._parallafka._pollerShutdownCts.Cancel();
+                    await this.WaitForPollerToStopAsync(timeoutTask);
                     await this.WaitForControllerToStopAsync(timeoutTask);
                 }
                 catch (Exception e)

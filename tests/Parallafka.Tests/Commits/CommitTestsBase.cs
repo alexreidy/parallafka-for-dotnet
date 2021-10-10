@@ -4,13 +4,12 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
 using Parallafka.KafkaConsumer;
 using Parallafka.Tests.OrderGuarantee;
 using Xunit;
 
-namespace Parallafka.Tests.Contracts
+namespace Parallafka.Tests.Commits
 {
     public abstract class CommitTestsBase : KafkaTopicTestBase
     {
@@ -20,9 +19,6 @@ namespace Parallafka.Tests.Contracts
         [Fact]
         public virtual async Task MessagesAreNotComittedTillAllEarlierOnesAreHandledAsync()
         {
-            // Hang an earlier message in partition; let newer msgs be handled.
-            // Show that nothing finished is committed until earliest is handled.
-
             var parallafkaConfig = new ParallafkaConfig<string, string>()
             {
                 MaxConcurrentHandlers = 7,
@@ -32,18 +28,12 @@ namespace Parallafka.Tests.Contracts
             int offsetOfMessageToHang = 12;
 
             Task<IEnumerable<IKafkaMessage<string, string>>> publishTask = this.PublishTestMessagesAsync(400, duplicateKeys: true);
-            await using(KafkaConsumerSpy<string, string> consumer = await this.Topic.GetConsumerAsync("parallafka"))
-            await using(var parallafka = new Parallafka<string, string>(consumer, parallafkaConfig))
+            KafkaConsumerSpy<string, string> consumer = await this.Topic.GetConsumerAsync("parallafka"); // TODO: hard-stop dispose strategy & reinstate usings().
+            var parallafka = new Parallafka<string, string>(consumer, parallafkaConfig);
             {
                 var consumed = new ConcurrentQueue<IKafkaMessage<string, string>>();
                 var firstPartitionMsgsConsumed = new ConcurrentQueue<IKafkaMessage<string, string>>();
-                
                 TaskCompletionSource hangEarlyMsgTcs = new();
-                TaskCompletionSource hangSubsequentMsgsTcs = new();
-                int nHandlersHanging = 0;
-
-                var msgsBeingHandled = new ConcurrentDictionary<IKafkaMessage<string, string>, IKafkaMessage<string, string>>();
-
                 var rngs = new ThreadSafeRandom();
                 Task consumeTask = parallafka.ConsumeAsync(async msg =>
                 {
@@ -52,90 +42,63 @@ namespace Parallafka.Tests.Contracts
                         await Task.Delay(rng.Next(25));
                     });
 
-                    msgsBeingHandled[msg] = msg;
                     if (msg.Offset.Partition == 0)
                     {
                         if (msg.Offset.Offset == offsetOfMessageToHang)
                         {
-                            Interlocked.Increment(ref nHandlersHanging);
                             await hangEarlyMsgTcs.Task;
-                            Interlocked.Decrement(ref nHandlersHanging);
-                        }
-                        else
-                        {
-                            // TODO: Why did I have these hang too?
-                            if (msg.Offset.Offset > offsetOfMessageToHang)
-                            {
-                                Interlocked.Increment(ref nHandlersHanging);
-                                await hangSubsequentMsgsTcs.Task;
-                                Interlocked.Decrement(ref nHandlersHanging);
-                            }
                         }
 
                         firstPartitionMsgsConsumed.Enqueue(msg);
                     }
 
                     consumed.Enqueue(msg);
-                    msgsBeingHandled.TryRemove(msg, out var _);
                 });
 
-                await Wait.UntilAsync("All handlers are hanging",
-                    async () =>
-                    {
-                        Assert.Equal(parallafkaConfig.MaxConcurrentHandlers, nHandlersHanging);
-                    },
-                    timeout: TimeSpan.FromSeconds(60));
-
-                int nConsumedInPartition = 0;
+                List<IKafkaMessage<string, string>> consumedMessagesBeforeHungMsg = new();
                 await Wait.UntilAsync(
-                    "Consumed the number of messages in the partition from offset 0 until the first hung message",
+                    "Consumed and committed the messages in the partition from offset 0 until the first hung message",
                     async () =>
                     {
-                        Assert.Equal((nConsumedInPartition = consumed.Where(msg => msg.Offset.Partition == 0).Count()), offsetOfMessageToHang);
-                    },
-                    timeout: TimeSpan.FromSeconds(15));
-
-                Assert.Equal(nConsumedInPartition, offsetOfMessageToHang);
-
-                await Wait.UntilAsync(
-                    "Messages in the partition from offset 0 up to the first hung msg have been committed",
-                    async () =>
-                    {
-                        Assert.Equal(nConsumedInPartition, offsetOfMessageToHang);
-                        Assert.Equal(nConsumedInPartition, firstPartitionMsgsConsumed.Count);
-                        foreach (var message in firstPartitionMsgsConsumed)
+                        long minExpectedConsumedCount = offsetOfMessageToHang - 1;
+                        Assert.True(firstPartitionMsgsConsumed.Count >= minExpectedConsumedCount,
+                            $"Should have consumed at least {minExpectedConsumedCount} but consumed {firstPartitionMsgsConsumed.Count}");
+                        
+                        consumedMessagesBeforeHungMsg = new();
+                        for (int i = 0; i < offsetOfMessageToHang; i++)
                         {
-                            Assert.Contains(message.Offset, consumer.CommittedOffsets);
+                            Assert.Contains(i, firstPartitionMsgsConsumed.Select(m => m.Offset.Offset));
+                            Assert.Contains(i, consumer.CommittedOffsets.Where(o => o.Partition == 0).Select(o => o.Offset));
+                            consumedMessagesBeforeHungMsg.Add(firstPartitionMsgsConsumed.First(m => m.Offset.Offset == i));
                         }
                     },
-                    timeout: TimeSpan.FromSeconds(15));
+                    timeout: TimeSpan.FromSeconds(50));
 
-                Assert.Equal(parallafkaConfig.MaxConcurrentHandlers, msgsBeingHandled.Count);
-                var msgsThatWereHanging = new HashSet<IKafkaMessage<string, string>>();
-                foreach (var msg in msgsBeingHandled.Values)
-                {
-                    msgsThatWereHanging.Add(msg);
-                    Assert.DoesNotContain(msg.Offset, consumer.CommittedOffsets);
-                }
+                Assert.Equal(offsetOfMessageToHang, consumedMessagesBeforeHungMsg.Count);
+                Assert.True(firstPartitionMsgsConsumed.Count >= offsetOfMessageToHang);
 
-                // Let handlers continue, except the one stuck on the first hung message.
-                hangSubsequentMsgsTcs.SetResult();
-
-                IEnumerable<IKafkaMessage<string, string>> formerlyHangingMsgs = msgsThatWereHanging.Where(m => m.Offset.Offset != offsetOfMessageToHang);
-                await Wait.UntilAsync("Formerly hanging messages following the stuck message have been consumed",
+                await Wait.UntilAsync("Consumed some messages in the partition after the hung message",
                     async () =>
                     {
-                        foreach (var msg in formerlyHangingMsgs)
-                        {
-                            Assert.Contains(msg, consumed);
-                        }
+                        var messagesConsumedAfterHungMessage = firstPartitionMsgsConsumed.Except(
+                            firstPartitionMsgsConsumed.Where(m => m.Offset.Offset <= offsetOfMessageToHang));
+                        int nConsumed = messagesConsumedAfterHungMessage.Count();
+                        Assert.True(nConsumed > 25, $"Consumed {nConsumed} messages after hung message");
                     },
-                    timeout: TimeSpan.FromSeconds(15));
+                    timeout: TimeSpan.FromSeconds(33));
 
-                await Task.Delay(5000);
-                foreach (var msg in formerlyHangingMsgs)
+                // Give Parallafka a _chance_ to commit after consuming those - but it should not commit the hung message or beyond.
+                await Task.Delay(9999);
+
+                // Assert that the hung message and consumed messages beyond have not been committed.
+                Assert.DoesNotContain(offsetOfMessageToHang, consumer.CommittedOffsets.Where(o => o.Partition == 0).Select(o => o.Offset));
+                foreach (var msg in firstPartitionMsgsConsumed)
                 {
-                    Assert.DoesNotContain(msg.Offset, consumer.CommittedOffsets);
+                    if (consumedMessagesBeforeHungMsg.Contains(msg))
+                    {
+                        continue;
+                    }
+                    Assert.DoesNotContain(msg.Offset.Offset, consumer.CommittedOffsets.Where(o => o.Partition == 0).Select(o => o.Offset));
                 }
 
                 hangEarlyMsgTcs.SetResult();
@@ -149,7 +112,7 @@ namespace Parallafka.Tests.Contracts
                     consumptionVerifier.AssertConsumedAllSentMessagesProperly();
                     consumptionVerifier.AssertAllConsumedMessagesWereCommitted(consumer);
                 },
-                timeout: TimeSpan.FromSeconds(20));
+                timeout: TimeSpan.FromSeconds(25));
             }
         }
     }
