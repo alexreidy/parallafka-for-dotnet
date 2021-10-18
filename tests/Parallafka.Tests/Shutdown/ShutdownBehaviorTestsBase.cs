@@ -11,9 +11,9 @@ namespace Parallafka.Tests.Shutdown
 {
     public abstract class ShutdownBehaviorTestsBase : KafkaTopicTestBase
     {
-        public virtual Task TestGracefulShutdownAsync()
+        public virtual async Task TestGracefulShutdownAsync()
         {
-            return this.PublishingTestMessagesContinuouslyAsync(async () =>
+            await this.PublishingTestMessagesContinuouslyAsync(async () =>
             {
                 var parallafkaConfig = new ParallafkaConfig<string, string>()
                 {
@@ -22,6 +22,10 @@ namespace Parallafka.Tests.Shutdown
                 };
 
                 var verifier = new ConsumptionVerifier();
+                Func<Task> maybeHangAsync = () => Task.CompletedTask;
+                int nMessagesBeingHandled = 0;
+
+                bool trackConsumedMessages = true;
 
                 var consumer = await this.Topic.GetConsumerAsync("myConsumer");
                 var parallafka = new Parallafka<string, string>(consumer, parallafkaConfig);
@@ -31,27 +35,53 @@ namespace Parallafka.Tests.Shutdown
                     var rngs = new ThreadSafeRandom();
                     Task consumeTask = parallafka.ConsumeAsync(async msg =>
                     {
+                        Interlocked.Increment(ref nMessagesBeingHandled);
                         await rngs.BorrowAsync(async rng =>
                         {
                             await Task.Delay(rng.Next(20));
                         });
 
-                        consumedMessages.Add(msg);
-                        verifier.AddConsumedMessages(new[] { msg });
+                        await maybeHangAsync();
+
+                        if (trackConsumedMessages)
+                        {
+                            consumedMessages.Add(msg);
+                            verifier.AddConsumedMessages(new[] { msg });
+                        }
+
+                        Interlocked.Decrement(ref nMessagesBeingHandled);
                     });
 
                     await Wait.UntilAsync("Consumed a bunch of messages", async () => consumedMessages.Count > 250,
                         timeout: TimeSpan.FromSeconds(45));
 
+                    var hangHandlerTcs = new TaskCompletionSource();
+                    maybeHangAsync = () => hangHandlerTcs.Task;
+                    // For thread safety, hang all handlers before commencing the shutdown
+                    await Wait.UntilAsync("All handlers are hanging",
+                        async () => nMessagesBeingHandled == parallafkaConfig.MaxConcurrentHandlers, 
+                        timeout: TimeSpan.FromSeconds(9));
+                    
+                    // Stop tracking consumed messages before initiating shutdown
+                    // so we know the set that should definitely be committed.
+                    trackConsumedMessages = false;
+
                     Task disposeTask = parallafka.DisposeAsync().AsTask();
 
-                    // TODO: Show that disposal doesn't complete until all in-progress messages are handled and committed.
-                    // And demonstrate the timeout works if they remain hanging.
+                    hangHandlerTcs.SetResult();
 
-                    await Wait.UntilAsync("All consumed messages are committed",
+                    await Wait.UntilAsync("Parallafka instance is disposed",
                         async () =>
                         {
                             Assert.True(disposeTask.IsCompletedSuccessfully);
+                        },
+                        timeout: TimeSpan.FromSeconds(60));
+
+                    Assert.Equal(0, nMessagesBeingHandled);
+
+                    await Wait.UntilAsync("All messages consumed pre-shutdown request are committed",
+                        async () =>
+                        {
                             verifier.AssertAllConsumedMessagesWereCommitted(consumer);
                         },
                         timeout: TimeSpan.FromSeconds(30));
@@ -67,6 +97,15 @@ namespace Parallafka.Tests.Shutdown
                 }
             });
         }
+
+        // public virtual async Task TestGracefulShutdownTimeoutAsync()
+        // {
+        //     var parallafkaConfig = new ParallafkaConfig<string, string>()
+        //     {
+        //         MaxConcurrentHandlers = 10,
+        //         DisposeStrategyProvider = self => new Parallafka<string, string>.GracefulShutdownDisposeStrategy(self),
+        //     };
+        // }
 
         public virtual async Task TestHardStopShutdownAsync()
         {

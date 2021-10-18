@@ -62,6 +62,8 @@ namespace Parallafka
         /// </summary>
         private readonly Dictionary<TKey, Queue<IKafkaMessage<TKey, TValue>>> _messagesToHandleForKey;
 
+        private readonly ConcurrentDictionary<int, OffsetStatus> _maxOffsetPickedUpForHandlingByPartition;
+
         public Parallafka(IKafkaConsumer<TKey, TValue> consumer, IParallafkaConfig<TKey, TValue> config)
         {
             this._consumer = consumer;
@@ -73,6 +75,7 @@ namespace Parallafka
             this._handledMessagesNotYetCommitted = new BlockingCollection<IKafkaMessage<TKey, TValue>>();
             this._messagesToHandleForKey = new Dictionary<TKey, Queue<IKafkaMessage<TKey, TValue>>>();
             this._messagesNotYetCommittedByPartition = new Dictionary<int, Queue<IKafkaMessage<TKey, TValue>>>();
+            this._maxOffsetPickedUpForHandlingByPartition = new ConcurrentDictionary<int, OffsetStatus>();
         }
 
         public async Task ConsumeAsync(Func<IKafkaMessage<TKey, TValue>, Task> consumeAsync)
@@ -137,9 +140,24 @@ namespace Parallafka
                             {
                                 // TODO: Optimize commit frequency; make configurable.
                                 // TODO: inject CancelToken for hard-stop strategy?
-                                // Also, optimize by committing just the most recently handled msg in the partition
+                                // Also, optimize by committing just the most recently handled msg in the partition,
                                 // if possible, and update docs about the method's contract.
                                 await this._consumer.CommitAsync(messagesToCommit.Select(m => m.Offset));
+
+                                foreach (var committedMsg in messagesToCommit)
+                                {
+                                    if (!this._maxOffsetPickedUpForHandlingByPartition.TryGetValue(committedMsg.Offset.Partition, out OffsetStatus maxOffsetPickedUp))
+                                    {
+                                        // TODO: Log
+                                        Console.WriteLine("No max offset for partition " + committedMsg.Offset.Partition);
+                                        continue;
+                                    }
+                                    if (committedMsg.Offset.Offset == maxOffsetPickedUp.Offset.Offset)
+                                    {
+                                        maxOffsetPickedUp.IsCommitted = true;
+                                    }
+                                }
+
                                 break;
                             }
                             catch (Exception e)
@@ -178,9 +196,9 @@ namespace Parallafka
                 {
                     Interlocked.Increment(ref this._nHandlerThreadsRunning);
 
+                    IKafkaMessage<TKey, TValue> message = null;
                     while (!this._handlerShutdownCts.IsCancellationRequested)
                     {
-                        IKafkaMessage<TKey, TValue> message = null;
                         try
                         {
                             message = this._messagesReadyForHandling.Take(this._handlerShutdownCts.Token);
@@ -188,6 +206,21 @@ namespace Parallafka
                         catch (OperationCanceledException)
                         {
                             break;
+                        }
+
+                        // Stop recording the max offset after shutdown begins so we have a
+                        // static "done" watermark to wait for in terms of commits.
+                        if (!this._pollerShutdownCts.IsCancellationRequested)
+                        {
+                            // TODO: Can this be done without handler thread contention, or at least with out-of-band sorts and purges with
+                            // a long queue of recents?
+                            // Maybe use non-concurrent dict so there's no contention except within partition.
+                            // Or find a way to do this before it becomes concurrent.
+                            this._maxOffsetPickedUpForHandlingByPartition.AddOrUpdate(message.Offset.Partition,
+                                addValueFactory: _ => new OffsetStatus(message.Offset),
+                                updateValueFactory: (partition, existing) =>
+                                    existing.Offset.Offset < message.Offset.Offset ?
+                                        new OffsetStatus(message.Offset) : existing);
                         }
 
                         try
@@ -204,6 +237,7 @@ namespace Parallafka
                         message.WasHandled = true;
                         this._handledMessagesNotYetCommitted.Add(message);
                     }
+
 
                     Interlocked.Decrement(ref this._nHandlerThreadsRunning);
                 });
@@ -277,13 +311,16 @@ namespace Parallafka
         {
             private Parallafka<TKey, TValue> _parallafka;
             private TimeSpan? _waitTimeout;
+            private bool _throwExceptionOnTimeout;
 
             public GracefulShutdownDisposeStrategy(
                 Parallafka<TKey, TValue> parallafka,
-                TimeSpan? waitTimeout = null)
+                TimeSpan? waitTimeout = null,
+                bool throwExceptionOnTimeout = true)
             {
                 this._parallafka = parallafka;
                 this._waitTimeout = waitTimeout;
+                this._throwExceptionOnTimeout = throwExceptionOnTimeout;
             }
 
             public async ValueTask DisposeAsync()
@@ -291,22 +328,48 @@ namespace Parallafka
                 var timeoutTask = Task.Delay(this._waitTimeout ?? TimeSpan.FromMilliseconds(int.MaxValue));
                 try
                 {
-                    this._parallafka._handlerShutdownCts.Cancel();
-                    await this.WaitForHandlersToStopAsync(timeoutTask);
                     this._parallafka._pollerShutdownCts.Cancel();
-                    await this.WaitForPollerToStopAsync(timeoutTask);
+                    await this.WaitUntilFinalOffsetsAreCommittedAsync(timeoutTask);
+                    this._parallafka._handlerShutdownCts.Cancel();
+                    this._parallafka._controllerHardStopCts.Cancel();
                     await this.WaitForControllerToStopAsync(timeoutTask);
+                    await this.WaitForHandlersToStopAsync(timeoutTask);
+                    await this.WaitForPollerToStopAsync(timeoutTask);
                 }
                 catch (Exception e)
                 {
                     Console.WriteLine(e);
                     // TODO: log
+
+                    if (e is TimeoutException && !this._throwExceptionOnTimeout)
+                    {
+                        return;
+                    }
+
                     throw;
                 }
                 finally
                 {
-                    this._parallafka._controllerHardStopCts.Cancel();
-                    //await this._parallafka._consumer.DisposeAsync();
+                    await this._parallafka._consumer.DisposeAsync();
+                }
+            }
+
+            // TODO: Refactor these waiters
+
+            private async Task WaitUntilFinalOffsetsAreCommittedAsync(Task timeoutTask)
+            {
+                while (true)
+                {
+                    if (this._parallafka._maxOffsetPickedUpForHandlingByPartition.Values.All(offset => offset.IsCommitted))
+                    {
+                        break;
+                    }
+
+                    await Task.Delay(10);
+                    if (timeoutTask.IsCompleted)
+                    {
+                         throw new TimeoutException("Timed out waiting for final offsets to be committed");
+                    }
                 }
             }
 
@@ -317,7 +380,7 @@ namespace Parallafka
                     await Task.Delay(10);
                     if (timeoutTask.IsCompleted)
                     {
-                        throw new Exception("Timed out waiting for poller to shut down");
+                        throw new TimeoutException("Timed out waiting for poller to shut down");
                     }
                 }
             }
@@ -329,7 +392,7 @@ namespace Parallafka
                     await Task.Delay(10);
                     if (timeoutTask.IsCompleted)
                     {
-                        throw new Exception($"Timed out waiting for {this._parallafka._nHandlerThreadsRunning} handlers to finish and shut down");
+                        throw new TimeoutException($"Timed out waiting for {this._parallafka._nHandlerThreadsRunning} handlers to finish and shut down");
                     }
                 }
             }
@@ -339,18 +402,34 @@ namespace Parallafka
                 // Assuming handlers and poller have stopped.
                 while (this._parallafka._controllerIsRunning)
                 {
-                    // Wait for empty pipes (the to-commit queue) and then stop controller.
-                    if (this._parallafka._handledMessagesNotYetCommitted.Count == 0)
-                    {
-                        this._parallafka._controllerHardStopCts.Cancel();
-                    }
-
                     await Task.Delay(10);
                     if (timeoutTask.IsCompleted)
                     {
-                        throw new Exception("Timed out waiting for Parallafka to shut down");
+                        throw new TimeoutException("Timed out waiting for Parallafka to shut down");
                     }
                 }
+            }
+        }
+
+        private class OffsetStatus
+        {
+            public IRecordOffset Offset { get; set; }
+
+            public bool IsCommitted { get; set; }
+
+            //public bool IsFinalToHandleForPartition { get; set; }
+            
+            public OffsetStatus(IRecordOffset offset, bool isCommitted = false)
+            {
+                this.Offset = offset;
+                this.IsCommitted = isCommitted;
+            }
+        }
+
+        public class TimeoutException : Exception
+        {
+            public TimeoutException(string message) : base(message)
+            {
             }
         }
     }

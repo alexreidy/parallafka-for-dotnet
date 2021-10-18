@@ -111,6 +111,7 @@ namespace Parallafka.Tests.Commits
                     consumptionVerifier.AddConsumedMessages(consumed);
                     consumptionVerifier.AssertConsumedAllSentMessagesProperly();
                     consumptionVerifier.AssertAllConsumedMessagesWereCommitted(consumer);
+                    Assert.Equal(consumed.Count, consumer.CommittedOffsets.Count);
                 },
                 timeout: TimeSpan.FromSeconds(25));
             }
