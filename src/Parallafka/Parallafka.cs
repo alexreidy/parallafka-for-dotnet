@@ -69,10 +69,11 @@ namespace Parallafka
             this._consumer = consumer;
             this._config = config;
 
-            // TODO: Configurable caps, good defaults
-            this._polledMessageQueue = new BlockingCollection<IKafkaMessage<TKey, TValue>>(15000);
-            this._messagesReadyForHandling = new BlockingCollection<IKafkaMessage<TKey, TValue>>(15000);
-            this._handledMessagesNotYetCommitted = new BlockingCollection<IKafkaMessage<TKey, TValue>>();
+            // TODO: Configurable caps, good defaults.
+            // Are there any deadlocks or performance issues with these caps in general?
+            this._polledMessageQueue = new BlockingCollection<IKafkaMessage<TKey, TValue>>(999);
+            this._messagesReadyForHandling = new BlockingCollection<IKafkaMessage<TKey, TValue>>(999);
+            this._handledMessagesNotYetCommitted = new BlockingCollection<IKafkaMessage<TKey, TValue>>(333);
             this._messagesToHandleForKey = new Dictionary<TKey, Queue<IKafkaMessage<TKey, TValue>>>();
             this._messagesNotYetCommittedByPartition = new Dictionary<int, Queue<IKafkaMessage<TKey, TValue>>>();
             this._maxOffsetPickedUpForHandlingByPartition = new ConcurrentDictionary<int, OffsetStatus>();
@@ -235,7 +236,14 @@ namespace Parallafka
                         }
                         
                         message.WasHandled = true;
-                        this._handledMessagesNotYetCommitted.Add(message);
+
+                        try
+                        {
+                            this._handledMessagesNotYetCommitted.Add(message, this._handlerShutdownCts.Token);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                        }
                     }
 
 
