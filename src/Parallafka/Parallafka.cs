@@ -65,7 +65,7 @@ namespace Parallafka
 
         private readonly ConcurrentDictionary<int, OffsetStatus> _maxOffsetPickedUpForHandlingByPartition;
 
-        private ILogger _logger;
+        private readonly ILogger _logger;
 
         public Parallafka(IKafkaConsumer<TKey, TValue> consumer, IParallafkaConfig<TKey, TValue> config)
         {
@@ -153,9 +153,7 @@ namespace Parallafka
                                 {
                                     if (!this._maxOffsetPickedUpForHandlingByPartition.TryGetValue(committedMsg.Offset.Partition, out OffsetStatus maxOffsetPickedUp))
                                     {
-                                        // TODO: Log
                                         this._logger.LogWarning("No max offset for partition {0}", committedMsg.Offset.Partition);
-                                        Console.WriteLine("No max offset for partition " + committedMsg.Offset.Partition);
                                         continue;
                                     }
                                     if (committedMsg.Offset.Offset == maxOffsetPickedUp.Offset.Offset)
@@ -168,8 +166,7 @@ namespace Parallafka
                             }
                             catch (Exception e)
                             {
-                                // TODO: log, delay
-                                Console.WriteLine(e);
+                                this._logger.LogError(e, "Error committing offsets");
                                 await Task.Delay(99);
                             }
                         }
@@ -236,9 +233,10 @@ namespace Parallafka
                         }
                         catch (Exception e)
                         {
-                            // TODO: Injected logger
-                            Console.WriteLine(e);
                             // TODO: User is responsible for handling errors but should we do anything else here?
+                            this._logger.LogError(e,
+                                "Unhandled exception in handler callback. Warning: Still attempting to commit this and handle further messages. Partition={0}, Offset={1}",
+                                message.Offset.Partition, message.Offset.Offset);
                         }
                         
                         message.WasHandled = true;
@@ -268,22 +266,33 @@ namespace Parallafka
                     while (!this._pollerShutdownCts.IsCancellationRequested)
                     {
                         // TODO: Error handling
-                        IKafkaMessage<TKey, TValue> message = await this._consumer.PollAsync(this._pollerShutdownCts.Token);
-                        if (message != null)
+                        try
                         {
-                            this._polledMessageQueue.Add(message);
+                            IKafkaMessage<TKey, TValue> message = await this._consumer.PollAsync(this._pollerShutdownCts.Token);
+                            if (message == null)
+                            {
+                                if (!this._pollerShutdownCts.IsCancellationRequested)
+                                {
+                                    this._logger.LogWarning(
+                                        "Polled a null message while not shutting down: breach of IKafkaConsumer contract");
+                                    await Task.Delay(50);
+                                }
+                            }
+                            else
+                            {
+                                this._polledMessageQueue.Add(message);
+                            }
                         }
-                        else
+                        catch (Exception e)
                         {
-                            // TODO: Log error if not cancelled. This is a breach of contract.
-                            await Task.Delay(50);
+                            this._logger.LogError(e, "Error in Kafka poller thread");
+                            await Task.Delay(333);
                         }
                     }
                 }
                 catch (Exception e)
                 {
-                    // TODO: log
-                    Console.WriteLine(e);
+                    this._logger.LogCritical(e, "Fatal error in Kafka poller thread");
                 }
                 finally
                 {
@@ -352,8 +361,7 @@ namespace Parallafka
                 }
                 catch (Exception e)
                 {
-                    Console.WriteLine(e);
-                    // TODO: log
+                    this._parallafka._logger.LogError(e, "Error disposing");
 
                     if (e is TimeoutException && !this._throwExceptionOnTimeout)
                     {
