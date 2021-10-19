@@ -105,6 +105,8 @@ namespace Parallafka.Tests.Shutdown
         //         MaxConcurrentHandlers = 10,
         //         DisposeStrategyProvider = self => new Parallafka<string, string>.GracefulShutdownDisposeStrategy(self),
         //     };
+
+        //     As
         // }
 
         public virtual async Task TestHardStopShutdownAsync()

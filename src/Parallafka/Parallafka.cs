@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Parallafka.KafkaConsumer;
+using Microsoft.Extensions.Logging;
 
 #pragma warning disable CS4014
 
@@ -64,10 +65,13 @@ namespace Parallafka
 
         private readonly ConcurrentDictionary<int, OffsetStatus> _maxOffsetPickedUpForHandlingByPartition;
 
+        private ILogger _logger;
+
         public Parallafka(IKafkaConsumer<TKey, TValue> consumer, IParallafkaConfig<TKey, TValue> config)
         {
             this._consumer = consumer;
             this._config = config;
+            this._logger = config.Logger;
 
             // TODO: Configurable caps, good defaults.
             // Are there any deadlocks or performance issues with these caps in general?
@@ -150,6 +154,7 @@ namespace Parallafka
                                     if (!this._maxOffsetPickedUpForHandlingByPartition.TryGetValue(committedMsg.Offset.Partition, out OffsetStatus maxOffsetPickedUp))
                                     {
                                         // TODO: Log
+                                        this._logger.LogWarning("No max offset for partition {0}", committedMsg.Offset.Partition);
                                         Console.WriteLine("No max offset for partition " + committedMsg.Offset.Partition);
                                         continue;
                                     }
@@ -193,6 +198,7 @@ namespace Parallafka
         {
             for (int i = 0; i < this._config.MaxConcurrentHandlers; i++)
             {
+                this._logger.LogInformation("Starting handler thread {0}", i);
                 Task.Run(async () =>
                 {
                     Interlocked.Increment(ref this._nHandlerThreadsRunning);
@@ -246,8 +252,8 @@ namespace Parallafka
                         }
                     }
 
-
                     Interlocked.Decrement(ref this._nHandlerThreadsRunning);
+                    this._logger.LogInformation("Handler thread {0} has stopped", i);
                 });
             }
         }

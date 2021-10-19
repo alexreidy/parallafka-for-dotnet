@@ -1,6 +1,5 @@
 using System;
-using System.Threading;
-using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 
 namespace Parallafka
 {
@@ -11,8 +10,8 @@ namespace Parallafka
 
         public int MaxConcurrentHandlers { get; set; } = 3;
 
-        public long? PauseConsumptionWhenUncommittedRecordCountExceeds { get; set; }
-
-        public Func<Task> OnUncommittedRecordCountExceedsThresholdAsync { get; set; }
+        public ILogger Logger { get; set; } =
+            LoggerFactory.Create(builder => builder.AddConsole())
+                .CreateLogger<IParallafka<TKey, TValue>>();
     }
 }
