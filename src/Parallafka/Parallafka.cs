@@ -439,19 +439,10 @@ namespace Parallafka
 
             public bool IsCommitted { get; set; }
 
-            //public bool IsFinalToHandleForPartition { get; set; }
-            
             public OffsetStatus(IRecordOffset offset, bool isCommitted = false)
             {
                 this.Offset = offset;
                 this.IsCommitted = isCommitted;
-            }
-        }
-
-        public class TimeoutException : Exception
-        {
-            public TimeoutException(string message) : base(message)
-            {
             }
         }
     }

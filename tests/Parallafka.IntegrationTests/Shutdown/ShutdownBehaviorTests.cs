@@ -24,6 +24,12 @@ namespace Parallafka.IntegrationTests.Shutdown
         }
 
         [Fact]
+        public override Task TestGracefulShutdownTimeoutAsync()
+        {
+            return base.TestGracefulShutdownTimeoutAsync();
+        }
+
+        [Fact]
         public override Task TestHardStopShutdownAsync()
         {
             return base.TestHardStopShutdownAsync();

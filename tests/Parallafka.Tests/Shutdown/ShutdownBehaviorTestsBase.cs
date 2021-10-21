@@ -98,16 +98,105 @@ namespace Parallafka.Tests.Shutdown
             });
         }
 
-        // public virtual async Task TestGracefulShutdownTimeoutAsync()
-        // {
-        //     var parallafkaConfig = new ParallafkaConfig<string, string>()
-        //     {
-        //         MaxConcurrentHandlers = 10,
-        //         DisposeStrategyProvider = self => new Parallafka<string, string>.GracefulShutdownDisposeStrategy(self),
-        //     };
+        public virtual async Task TestGracefulShutdownTimeoutAsync()
+        {
+            var shutdownTimeout = TimeSpan.FromSeconds(12);
+            var timeoutWithExceptionConfig = new ParallafkaConfig<string, string>()
+            {
+                MaxConcurrentHandlers = 10,
+                DisposeStrategyProvider = self => new Parallafka<string, string>.GracefulShutdownDisposeStrategy(self,
+                    waitTimeout: shutdownTimeout, throwExceptionOnTimeout: true),
+            };
+            var timeoutWithoutExceptionConfig = new ParallafkaConfig<string, string>()
+            {
+                MaxConcurrentHandlers = 10,
+                DisposeStrategyProvider = self => new Parallafka<string, string>.GracefulShutdownDisposeStrategy(self,
+                    waitTimeout: shutdownTimeout, throwExceptionOnTimeout: false),
+            };
+            var noTimeoutConfig = new ParallafkaConfig<string, string>()
+            {
+                MaxConcurrentHandlers = 10,
+                DisposeStrategyProvider = self => new Parallafka<string, string>.GracefulShutdownDisposeStrategy(self,
+                    waitTimeout: null),
+            };
+            var consumer1 = await this.Topic.GetConsumerAsync("timeoutWithException");
+            var consumer2 = await this.Topic.GetConsumerAsync("timeoutWithoutException");
+            var consumer3 = await this.Topic.GetConsumerAsync("noTimeoutEvenAtAllWhatsoever");
+            var timeoutWithExceptionInstance = new Parallafka<string, string>(
+                consumer1, timeoutWithExceptionConfig);
+            var timeoutWithoutExceptionInstance = new Parallafka<string, string>(
+                consumer2, timeoutWithoutExceptionConfig);
+            var noTimeoutInstance = new Parallafka<string, string>(
+                consumer3, noTimeoutConfig);
+            {
+                var verifier1 = new ConsumptionVerifier();
+                var verifier2 = new ConsumptionVerifier();
+                var verifier3 = new ConsumptionVerifier();
+                var finalMessage = new KafkaMessage<string, string>("TheFinalMessage", "I am the walrus");
+                int nhandlersHangingOnFinalMsg = 0;
+                var rngs = new ThreadSafeRandom();
 
-        //     As
-        // }
+                Func<IKafkaMessage<string, string>, Task> handlerWithVerifier(ConsumptionVerifier verifier)
+                {
+                    return async msg =>
+                    {
+                        if (msg.Key == finalMessage.Key)
+                        {
+                            Interlocked.Increment(ref nhandlersHangingOnFinalMsg);
+                            await Task.Delay(TimeSpan.FromMinutes(3));
+                        }
+                        else
+                        {
+                            await rngs.BorrowAsync(rng => Task.Delay(rng.Next(50)));
+                        }
+                        verifier.AddConsumedMessage(msg);
+                    };
+                }
+
+                Task consumeTask1 = timeoutWithExceptionInstance.ConsumeAsync(handlerWithVerifier(verifier1));
+                Task consumeTask2 = timeoutWithoutExceptionInstance.ConsumeAsync(handlerWithVerifier(verifier2));
+                Task consumeTask3 = noTimeoutInstance.ConsumeAsync(handlerWithVerifier(verifier3));
+
+                var publishedMsgs = await this.PublishTestMessagesAsync(42);
+                verifier1.AddSentMessages(publishedMsgs);
+                verifier2.AddSentMessages(publishedMsgs);
+                verifier3.AddSentMessages(publishedMsgs);
+                await Wait.UntilAsync("Consumed initial batch", async () =>
+                {
+                    verifier1.AssertConsumedAllSentMessagesProperly();
+                    verifier1.AssertAllConsumedMessagesWereCommitted(consumer1);
+                    verifier2.AssertConsumedAllSentMessagesProperly();
+                    verifier2.AssertAllConsumedMessagesWereCommitted(consumer2);
+                    verifier3.AssertConsumedAllSentMessagesProperly();
+                    verifier3.AssertAllConsumedMessagesWereCommitted(consumer3);
+                },
+                timeout: TimeSpan.FromSeconds(30));
+
+                await this.Topic.PublishAsync(new[] { finalMessage });
+                await Wait.UntilAsync("All handlers are hanging on final msg",
+                    async () => nhandlersHangingOnFinalMsg == 3,
+                    timeout: TimeSpan.FromSeconds(7));
+
+                var shutdownStartTime = DateTime.UtcNow;
+                await Assert.ThrowsAsync<TimeoutException>(async () =>
+                {
+                    Task disposeTask = timeoutWithExceptionInstance.DisposeAsync().AsTask();
+
+                    var metaTimeoutTask = Task.Delay(shutdownTimeout.Add(TimeSpan.FromSeconds(5)));
+                    await Task.WhenAny(disposeTask, metaTimeoutTask);
+                    if (metaTimeoutTask.IsCompleted)
+                    {
+                        throw new Exception("Timed out waiting for Parallafka's disposal to time out");
+                    }
+                    await disposeTask;
+                });
+                Assert.True(DateTime.UtcNow - shutdownStartTime >= shutdownTimeout);
+            }
+
+            
+
+            // Show that Handler3 keeps going as not configured to time out.
+        }
 
         public virtual async Task TestHardStopShutdownAsync()
         {

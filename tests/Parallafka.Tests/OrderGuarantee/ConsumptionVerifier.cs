@@ -62,6 +62,11 @@ namespace Parallafka.Tests.OrderGuarantee
             }
         }
 
+        public void AddConsumedMessage(IKafkaMessage<string, string> message)
+        {
+            this.AddConsumedMessages(new[] { message });
+        }
+
         public void AssertConsumedAllSentMessagesProperly()
         {
             Assert.Equal(this._sentMessages.Count, this._consumedMessageCount);
