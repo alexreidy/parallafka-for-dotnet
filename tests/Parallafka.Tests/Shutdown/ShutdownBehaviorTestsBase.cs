@@ -177,6 +177,9 @@ namespace Parallafka.Tests.Shutdown
                     async () => nhandlersHangingOnFinalMsg == 3,
                     timeout: TimeSpan.FromSeconds(7));
 
+                // Kick this off. We'll revisit and verify it hasn't completed.
+                Task disposeWithoutTimeoutTask = noTimeoutInstance.DisposeAsync().AsTask();
+
                 var shutdownStartTime = DateTime.UtcNow;
                 await Assert.ThrowsAsync<TimeoutException>(async () =>
                 {
@@ -191,11 +194,20 @@ namespace Parallafka.Tests.Shutdown
                     await disposeTask;
                 });
                 Assert.True(DateTime.UtcNow - shutdownStartTime >= shutdownTimeout);
+
+                shutdownStartTime = DateTime.UtcNow;
+                Task disposeTask = timeoutWithoutExceptionInstance.DisposeAsync().AsTask();
+                var metaTimeoutTask = Task.Delay(shutdownTimeout.Add(TimeSpan.FromSeconds(5)));
+                if (metaTimeoutTask.IsCompleted)
+                {
+                    throw new Exception("Timed out waiting for Parallafka's disposal to time out");
+                }
+                // DisposeAsync() should not throw.
+                await disposeTask;
+
+                await Task.Delay(shutdownTimeout.Add(TimeSpan.FromSeconds(12)));
+                Assert.False(disposeWithoutTimeoutTask.IsCompleted);
             }
-
-            
-
-            // Show that Handler3 keeps going as not configured to time out.
         }
 
         public virtual async Task TestHardStopShutdownAsync()
