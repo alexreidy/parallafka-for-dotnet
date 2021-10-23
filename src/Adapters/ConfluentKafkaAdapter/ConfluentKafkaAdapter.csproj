@@ -10,6 +10,13 @@
 
   <PropertyGroup>
     <TargetFramework>net5.0</TargetFramework>
+    <PackageProjectUrl>https://github.com/alexreidy/parallafka-for-dotnet/</PackageProjectUrl>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageTags>Kafka;parallel;fast;consumer</PackageTags>
+    <PackageId>Parallafka.AdapterForConfluentConsumer</PackageId>
+    <Title>Parallafka adapter for the Confluent Kafka consumer</Title>
+    <Version>0.9.0</Version>
+    <Description>Adapts Confluent's Kafka consumer client for use with Parallafka</Description>
   </PropertyGroup>
 
 </Project>

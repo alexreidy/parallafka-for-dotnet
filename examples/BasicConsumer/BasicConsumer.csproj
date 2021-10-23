@@ -1,13 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Parallafka\Parallafka.csproj" />
-    <ProjectReference Include="..\..\src\Adapters\ConfluentKafkaAdapter\ConfluentKafkaAdapter.csproj" />
+    
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Confluent.Kafka" Version="1.8.2" />
     <PackageReference Include="Confluent.SchemaRegistry.Serdes.Json" Version="1.8.2" />
+    <PackageReference Include="Parallafka" Version="0.9.0" />
+    <PackageReference Include="Parallafka.AdapterForConfluentConsumer" Version="0.9.0" />
   </ItemGroup>
 
   <PropertyGroup>
