@@ -15,6 +15,7 @@ static async Task Main(string[] args)
     
     await parallafka.ConsumeAsync(async (IKafkaMessage<string, StockPrice> message) =>
     {
+        // This handler code will process up to 7 messages at the same time
         Console.WriteLine($"{message.Value.TickerSymbol} is ${message.Value.Price}");
     });
 }
@@ -33,7 +34,7 @@ static IKafkaConsumer<string, T> ConsumerForTopic<T>(string topicName)
         .SetValueDeserializer(new JsonDeserializer<T>().AsSyncOverAsync());
     IConsumer<string, T> rawConsumer = consumerBuilder.Build();
     rawConsumer.Subscribe(topicName);
-    
+
     return new ConfluentConsumerAdapter<string, T>(rawConsumer, topicName);
 }
 ```
