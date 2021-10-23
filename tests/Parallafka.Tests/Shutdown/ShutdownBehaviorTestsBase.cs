@@ -253,6 +253,13 @@ namespace Parallafka.Tests.Shutdown
             });
         }
 
+        class StockPrice
+        {
+            string TickerSymbol { get; set; }
+
+            decimal Price { get; set; }
+        }
+
         private async Task PublishingTestMessagesContinuouslyAsync(Func<Task> actAsync)
         {
             Task publishTask = Task.CompletedTask;
