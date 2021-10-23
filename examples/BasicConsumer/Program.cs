@@ -13,7 +13,10 @@ namespace BasicConsumer
     {
         static async Task Main(string[] args)
         {
-            IKafkaConsumer<string, StockPrice> consumer = ConsumerForTopic<StockPrice>("ultimate-stonks-watchlist");
+            string topicName = "ultimate-stonks-watchlist";
+            IConsumer<string, StockPrice> confluentConsumer = ConsumerForTopic<StockPrice>(topicName);
+            IKafkaConsumer<string, StockPrice> consumer = new ConfluentConsumerAdapter<string, StockPrice>(
+                confluentConsumer, topicName);
 
             IParallafkaConfig<string, StockPrice> config = new ParallafkaConfig<string, StockPrice>()
             {
@@ -27,7 +30,7 @@ namespace BasicConsumer
             });
         }
 
-        static IKafkaConsumer<string, T> ConsumerForTopic<T>(string topicName)
+        static IConsumer<string, T> ConsumerForTopic<T>(string topicName)
             where T : class
         {
             var consumerConfig = new ConsumerConfig()
@@ -41,7 +44,7 @@ namespace BasicConsumer
                 .SetValueDeserializer(new JsonDeserializer<T>().AsSyncOverAsync());
             IConsumer<string, T> rawConsumer = consumerBuilder.Build();
             rawConsumer.Subscribe(topicName);
-            return new ConfluentConsumerAdapter<string, T>(rawConsumer, topicName);
+            return rawConsumer;
         }
     }
 
