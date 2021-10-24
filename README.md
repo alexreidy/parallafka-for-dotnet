@@ -18,6 +18,7 @@ static async Task Main(string[] args)
 
     await parallafka.ConsumeAsync(async (IKafkaMessage<string, StockPrice> message) =>
     {
+        // This handler code will now run on up to 7 threads at once
         Console.WriteLine($"{message.Value.TickerSymbol} is ${message.Value.Price}");
     });
 }
