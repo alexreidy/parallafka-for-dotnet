@@ -6,9 +6,7 @@ namespace Parallafka
 {
     public interface IParallafkaConfig<TKey, TValue>
     {
-        int MaxConcurrentHandlers { get; }
-
-        Func<Parallafka<TKey, TValue>, IDisposeStrategy> DisposeStrategyProvider { get; }
+        int MaxDegreeOfParallelism { get; }
 
         ILogger Logger { get; }
 

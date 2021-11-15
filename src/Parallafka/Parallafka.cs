@@ -4,10 +4,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Threading.Tasks.Dataflow;
 using Parallafka.KafkaConsumer;
 using Microsoft.Extensions.Logging;
-
-#pragma warning disable CS4014
 
 namespace Parallafka
 {
@@ -17,34 +16,24 @@ namespace Parallafka
 
         private readonly IParallafkaConfig<TKey, TValue> _config;
 
-        private readonly CancellationTokenSource _pollerShutdownCts = new();
-
-        private bool _pollerIsRunning = false;
-
         private readonly CancellationTokenSource _handlerShutdownCts = new();
 
-        private int _nHandlerThreadsRunning = 0;
-
-        private bool _handlerThreadsAreRunning => this._nHandlerThreadsRunning > 0;
-
         private readonly CancellationTokenSource _controllerHardStopCts = new();
-
-        private bool _controllerIsRunning = false;
 
         /// <summary>
         /// A bounded buffer for messages polled from Kafka.
         /// </summary>
-        private readonly BlockingCollection<IKafkaMessage<TKey, TValue>> _polledMessageQueue;
+        private readonly ITargetBlock<IKafkaMessage<TKey, TValue>> _routingTarget;
 
         /// <summary>
         /// Messages eligible for handler threads to pick up and handle.
         /// </summary>
-        private readonly BlockingCollection<IKafkaMessage<TKey, TValue>> _messagesReadyForHandling;
+        private readonly ITargetBlock<IKafkaMessage<TKey, TValue>> _handlingTarget;
 
         /// <summary>
         /// This is where messages go after being handled: enqueued to be committed when it's safe.
         /// </summary>
-        private readonly BlockingCollection<IKafkaMessage<TKey, TValue>> _handledMessagesNotYetCommitted;
+        private readonly ITargetBlock<IKafkaMessage<TKey, TValue>> _committerTarget;
 
         /// <summary>
         /// Maps partition number to a queue of the messages received from that partition.
@@ -52,7 +41,7 @@ namespace Parallafka
         /// It's safe to commit a handled message provided all earlier (lower-offset) messages have also been marked
         /// as handled.
         /// </summary>
-        private Dictionary<int, Queue<IKafkaMessage<TKey, TValue>>> _messagesNotYetCommittedByPartition;
+        private readonly Dictionary<int, Queue<IKafkaMessage<TKey, TValue>>> _messagesNotYetCommittedByPartition;
 
         /// <summary>
         /// Maps the Kafka message key to a queue of as yet unhandled messages with the key, or null rather
@@ -65,156 +54,198 @@ namespace Parallafka
 
         private readonly ConcurrentDictionary<int, OffsetStatus> _maxOffsetPickedUpForHandlingByPartition;
 
+        /// <summary>
+        /// The function that actually processes the message
+        /// </summary>
+        private readonly Func<IKafkaMessage<TKey, TValue>, Task> _messageHandlerAsync;
+
         private readonly ILogger _logger;
 
-        public Parallafka(IKafkaConsumer<TKey, TValue> consumer, IParallafkaConfig<TKey, TValue> config)
+        public Parallafka(
+            IKafkaConsumer<TKey, TValue> consumer,
+            IParallafkaConfig<TKey, TValue> config,
+            Func<IKafkaMessage<TKey, TValue>, Task> messageHandlerAsync)
         {
             this._consumer = consumer;
             this._config = config;
             this._logger = config.Logger;
+            this._messageHandlerAsync = messageHandlerAsync;
 
             // TODO: Configurable caps, good defaults.
             // Are there any deadlocks or performance issues with these caps in general?
-            this._polledMessageQueue = new BlockingCollection<IKafkaMessage<TKey, TValue>>(999);
-            this._messagesReadyForHandling = new BlockingCollection<IKafkaMessage<TKey, TValue>>(999);
-            this._handledMessagesNotYetCommitted = new BlockingCollection<IKafkaMessage<TKey, TValue>>(333);
-            this._messagesToHandleForKey = new Dictionary<TKey, Queue<IKafkaMessage<TKey, TValue>>>();
-            this._messagesNotYetCommittedByPartition = new Dictionary<int, Queue<IKafkaMessage<TKey, TValue>>>();
-            this._maxOffsetPickedUpForHandlingByPartition = new ConcurrentDictionary<int, OffsetStatus>();
+            this._routingTarget = new ActionBlock<IKafkaMessage<TKey, TValue>>(this.RouteMessages,
+                new ExecutionDataflowBlockOptions
+                {
+                    BoundedCapacity = 999,
+                    MaxDegreeOfParallelism = 1
+                });
+
+            this._handlingTarget = new ActionBlock<IKafkaMessage<TKey, TValue>>(this.MessageHandler,
+                new ExecutionDataflowBlockOptions
+                {
+                    MaxDegreeOfParallelism = this._config.MaxDegreeOfParallelism
+                });
+
+            this._committerTarget = new ActionBlock<IKafkaMessage<TKey, TValue>>(this.CommitMessage,
+                new ExecutionDataflowBlockOptions
+                {
+                    BoundedCapacity = 333,
+                    MaxDegreeOfParallelism = 1
+                });
+            
+            this._messagesToHandleForKey = new();
+            this._messagesNotYetCommittedByPartition = new();
+            this._maxOffsetPickedUpForHandlingByPartition = new();
         }
 
-        public async Task ConsumeAsync(Func<IKafkaMessage<TKey, TValue>, Task> consumeAsync)
+        private async Task RouteMessages(IKafkaMessage<TKey, TValue> message)
         {
-            this.StartKafkaPollerThread();
-            this.StartHandlerThreads(consumeAsync);
-
-            this._controllerIsRunning = true;
-            await Task.Yield();
-            while (!this._controllerHardStopCts.IsCancellationRequested)
+            if (!this._messagesNotYetCommittedByPartition.TryGetValue(message.Offset.Partition,
+                out Queue<IKafkaMessage<TKey, TValue>> messagesInPartition))
             {
-                bool gotOne = this._polledMessageQueue.TryTake(out IKafkaMessage<TKey, TValue> message, millisecondsTimeout: 1);
-                if (gotOne)
+                messagesInPartition = new Queue<IKafkaMessage<TKey, TValue>>();
+                this._messagesNotYetCommittedByPartition[message.Offset.Partition] = messagesInPartition;
+            }
+            messagesInPartition.Enqueue(message);
+
+            bool aMessageWithThisKeyIsCurrentlyBeingHandled = this._messagesToHandleForKey.TryGetValue(message.Key,
+                out Queue<IKafkaMessage<TKey, TValue>> messagesToHandleForKey);
+            if (aMessageWithThisKeyIsCurrentlyBeingHandled)
+            {
+                if (messagesToHandleForKey == null)
                 {
-                    if (!this._messagesNotYetCommittedByPartition.TryGetValue(message.Offset.Partition,
-                        out Queue<IKafkaMessage<TKey, TValue>> messagesInPartition))
-                    {
-                        messagesInPartition = new Queue<IKafkaMessage<TKey, TValue>>();
-                        this._messagesNotYetCommittedByPartition[message.Offset.Partition] = messagesInPartition;
-                    }
-                    messagesInPartition.Enqueue(message);
-
-                    bool aMessageWithThisKeyIsCurrentlyBeingHandled = this._messagesToHandleForKey.TryGetValue(message.Key,
-                        out Queue<IKafkaMessage<TKey, TValue>> messagesToHandleForKey);
-                    if (aMessageWithThisKeyIsCurrentlyBeingHandled)
-                    {
-                        if (messagesToHandleForKey == null)
-                        {
-                            messagesToHandleForKey = new Queue<IKafkaMessage<TKey, TValue>>();
-                            this._messagesToHandleForKey[message.Key] = messagesToHandleForKey;
-                        }
-
-                        messagesToHandleForKey.Enqueue(message);
-                    }
-                    else
-                    {
-                        // Add the key to indicate that a message with the key is being handled (see above)
-                        // so we know to queue up any additional messages with the key.
-                        // Without this line, FIFO same-key handling order is not enforced.
-                        // Remove it to test the tests.
-                        this._messagesToHandleForKey[message.Key] = null;
-                        this._messagesReadyForHandling.Add(message);
-                    }
+                    messagesToHandleForKey = new Queue<IKafkaMessage<TKey, TValue>>();
+                    this._messagesToHandleForKey[message.Key] = messagesToHandleForKey;
                 }
 
-                if (this._handledMessagesNotYetCommitted.TryTake(out IKafkaMessage<TKey, TValue> handledMessage))
+                messagesToHandleForKey.Enqueue(message);
+            }
+            else
+            {
+                // Add the key to indicate that a message with the key is being handled (see above)
+                // so we know to queue up any additional messages with the key.
+                // Without this line, FIFO same-key handling order is not enforced.
+                // Remove it to test the tests.
+                this._messagesToHandleForKey[message.Key] = null;
+                await this._handlingTarget.SendAsync(message, this._handlerShutdownCts.Token);
+            }
+
+            // If there are any messages with the same key queued, make the next one available for handling.
+            // TODO: Is this safe as far as commits?
+            if (this._messagesToHandleForKey.TryGetValue(message.Key,
+                out Queue<IKafkaMessage<TKey, TValue>> messagesQueuedForKey))
+            {
+                if (messagesQueuedForKey == null || messagesQueuedForKey.Count == 0)
                 {
-                    Queue<IKafkaMessage<TKey, TValue>> messagesNotYetCommitted = this._messagesNotYetCommittedByPartition[handledMessage.Offset.Partition];
+                    this._messagesToHandleForKey.Remove(message.Key);
+                }
+                else
+                {
+                    await this._handlingTarget.SendAsync(messagesQueuedForKey.Dequeue());
+                }
+            }
+        }
 
-                    if (messagesNotYetCommitted.Count > 0 && handledMessage == messagesNotYetCommitted.Peek())
+        private async Task CommitMessage(IKafkaMessage<TKey, TValue> message)
+        {
+            Queue<IKafkaMessage<TKey, TValue>> messagesNotYetCommitted = this._messagesNotYetCommittedByPartition[message.Offset.Partition];
+
+            if (messagesNotYetCommitted.Count > 0 && message == messagesNotYetCommitted.Peek())
+            {
+                var messagesToCommit = new List<IKafkaMessage<TKey, TValue>>();
+                while (messagesNotYetCommitted.TryPeek(out IKafkaMessage<TKey, TValue> msg) && msg.WasHandled)
+                {
+                    messagesToCommit.Add(msg);
+                    messagesNotYetCommitted.Dequeue();
+                }
+
+                while (!this._controllerHardStopCts.IsCancellationRequested && messagesToCommit.Count > 0)
+                {
+                    try
                     {
-                        var messagesToCommit = new List<IKafkaMessage<TKey, TValue>>();
-                        while (messagesNotYetCommitted.TryPeek(out IKafkaMessage<TKey, TValue> msg) && msg.WasHandled)
-                        {
-                            messagesToCommit.Add(msg);
-                            messagesNotYetCommitted.Dequeue();
-                        }
+                        // TODO: Optimize commit frequency; make configurable.
+                        // TODO: inject CancelToken for hard-stop strategy?
+                        // Also, optimize by committing just the most recently handled msg in the partition,
+                        // if possible, and update docs about the method's contract.
+                        await this._consumer.CommitAsync(messagesToCommit.Select(m => m.Offset));
 
-                        while (!this._controllerHardStopCts.IsCancellationRequested && messagesToCommit.Count > 0)
+                        foreach (var committedMsg in messagesToCommit)
                         {
-                            try
+                            if (!this._maxOffsetPickedUpForHandlingByPartition.TryGetValue(
+                                committedMsg.Offset.Partition, out OffsetStatus maxOffsetPickedUp))
                             {
-                                // TODO: Optimize commit frequency; make configurable.
-                                // TODO: inject CancelToken for hard-stop strategy?
-                                // Also, optimize by committing just the most recently handled msg in the partition,
-                                // if possible, and update docs about the method's contract.
-                                await this._consumer.CommitAsync(messagesToCommit.Select(m => m.Offset));
-
-                                foreach (var committedMsg in messagesToCommit)
-                                {
-                                    if (!this._maxOffsetPickedUpForHandlingByPartition.TryGetValue(committedMsg.Offset.Partition, out OffsetStatus maxOffsetPickedUp))
-                                    {
-                                        this._logger.LogWarning("No max offset for partition {0}", committedMsg.Offset.Partition);
-                                        continue;
-                                    }
-                                    if (committedMsg.Offset.Offset == maxOffsetPickedUp.Offset.Offset)
-                                    {
-                                        maxOffsetPickedUp.IsCommitted = true;
-                                    }
-                                }
-
-                                break;
+                                this._logger.LogWarning("No max offset for partition {0}",
+                                    committedMsg.Offset.Partition);
+                                continue;
                             }
-                            catch (Exception e)
+
+                            if (committedMsg.Offset.Offset == maxOffsetPickedUp.Offset.Offset)
                             {
-                                this._logger.LogError(e, "Error committing offsets");
-                                await Task.Delay(99);
+                                maxOffsetPickedUp.IsCommitted = true;
                             }
                         }
+
+                        break;
                     }
-
-                    // If there are any messages with the same key queued, make the next one available for handling.
-                    // TODO: Is this safe as far as commits?
-                    if (this._messagesToHandleForKey.TryGetValue(handledMessage.Key, out Queue<IKafkaMessage<TKey, TValue>> messagesQueuedForKey))
+                    catch (Exception e)
                     {
-                        if (messagesQueuedForKey == null || messagesQueuedForKey.Count == 0)
-                        {
-                            this._messagesToHandleForKey.Remove(handledMessage.Key);
-                        }
-                        else
-                        {
-                            this._messagesReadyForHandling.Add(messagesQueuedForKey.Dequeue());
-                        }
+                        this._logger.LogError(e, "Error committing offsets");
+                        await Task.Delay(99);
                     }
                 }
             }
-
-            this._controllerIsRunning = false;
         }
 
-        private void StartHandlerThreads(Func<IKafkaMessage<TKey, TValue>, Task> consumeAsync)
+        public Task ConsumeAsync(CancellationToken stopToken)
         {
-            for (int i = 0; i < this._config.MaxConcurrentHandlers; i++)
+            return this.KafkaPollerThread(stopToken);
+        }
+
+        private async Task MessageHandler(IKafkaMessage<TKey, TValue> message)
+        {
+            try
             {
-                this._logger.LogInformation("Starting handler thread {0}", i);
-                Task.Run(async () =>
+                await this._messageHandlerAsync(message);
+            }
+            catch (Exception e)
+            {
+                // TODO: User is responsible for handling errors but should we do anything else here?
+                this._logger.LogError(e,
+                    "Unhandled exception in handler callback. Warning: Still attempting to commit this and handle further messages. Partition={0}, Offset={1}",
+                    message.Offset.Partition, message.Offset.Offset);
+            }
+
+            message.WasHandled = true;
+
+            try
+            {
+                await _committerTarget.SendAsync(message, this._handlerShutdownCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        private async Task KafkaPollerThread(CancellationToken stopToken)
+        {
+            try
+            {
+                while (!stopToken.IsCancellationRequested)
                 {
-                    Interlocked.Increment(ref this._nHandlerThreadsRunning);
-
-                    IKafkaMessage<TKey, TValue> message = null;
-                    while (!this._handlerShutdownCts.IsCancellationRequested)
+                    // TODO: Error handling
+                    try
                     {
-                        try
+                        IKafkaMessage<TKey, TValue> message = await this._consumer.PollAsync(stopToken);
+                        if (message == null)
                         {
-                            message = this._messagesReadyForHandling.Take(this._handlerShutdownCts.Token);
+                            if (!stopToken.IsCancellationRequested)
+                            {
+                                this._logger.LogWarning(
+                                    "Polled a null message while not shutting down: breach of IKafkaConsumer contract");
+                                await Task.Delay(50);
+                            }
                         }
-                        catch (OperationCanceledException)
-                        {
-                            break;
-                        }
-
-                        // Stop recording the max offset after shutdown begins so we have a
-                        // static "done" watermark to wait for in terms of commits.
-                        if (!this._pollerShutdownCts.IsCancellationRequested)
+                        else
                         {
                             // TODO: Can this be done without handler thread contention, or at least with out-of-band sorts and purges with
                             // a long queue of recents?
@@ -225,211 +256,29 @@ namespace Parallafka
                                 updateValueFactory: (partition, existing) =>
                                     existing.Offset.Offset < message.Offset.Offset ?
                                         new OffsetStatus(message.Offset) : existing);
-                        }
 
-                        try
-                        {
-                            await consumeAsync(message);
-                        }
-                        catch (Exception e)
-                        {
-                            // TODO: User is responsible for handling errors but should we do anything else here?
-                            this._logger.LogError(e,
-                                "Unhandled exception in handler callback. Warning: Still attempting to commit this and handle further messages. Partition={0}, Offset={1}",
-                                message.Offset.Partition, message.Offset.Offset);
-                        }
-                        
-                        message.WasHandled = true;
-
-                        try
-                        {
-                            this._handledMessagesNotYetCommitted.Add(message, this._handlerShutdownCts.Token);
-                        }
-                        catch (OperationCanceledException)
-                        {
+                            await this._routingTarget.SendAsync(message, stopToken);
                         }
                     }
-
-                    Interlocked.Decrement(ref this._nHandlerThreadsRunning);
-                    this._logger.LogInformation("Handler thread {0} has stopped", i);
-                });
-            }
-        }
-
-        private void StartKafkaPollerThread()
-        {
-            Task.Run(async () =>
-            {
-                this._pollerIsRunning = true;
-                try
-                {
-                    while (!this._pollerShutdownCts.IsCancellationRequested)
+                    catch (Exception e)
                     {
-                        // TODO: Error handling
-                        try
-                        {
-                            IKafkaMessage<TKey, TValue> message = await this._consumer.PollAsync(this._pollerShutdownCts.Token);
-                            if (message == null)
-                            {
-                                if (!this._pollerShutdownCts.IsCancellationRequested)
-                                {
-                                    this._logger.LogWarning(
-                                        "Polled a null message while not shutting down: breach of IKafkaConsumer contract");
-                                    await Task.Delay(50);
-                                }
-                            }
-                            else
-                            {
-                                this._polledMessageQueue.Add(message);
-                            }
-                        }
-                        catch (Exception e)
-                        {
-                            this._logger.LogError(e, "Error in Kafka poller thread");
-                            await Task.Delay(333);
-                        }
+                        this._logger.LogError(e, "Error in Kafka poller thread");
+                        await Task.Delay(333);
                     }
                 }
-                catch (Exception e)
-                {
-                    this._logger.LogCritical(e, "Fatal error in Kafka poller thread");
-                }
-                finally
-                {
-                    this._pollerIsRunning = false;
-                }
-            });
-        }
 
-        public ValueTask DisposeAsync()
-        {
-            return this._config.DisposeStrategyProvider.Invoke(this).DisposeAsync();
-        }
+                this._routingTarget.Complete();
+                await this._routingTarget.Completion;
 
-        public class HardStopDisposeStrategy : IDisposeStrategy
-        {
-            private Parallafka<TKey, TValue> _parallafka;
+                this._handlingTarget.Complete();
+                await this._handlingTarget.Completion;
 
-            public HardStopDisposeStrategy(Parallafka<TKey, TValue> parallafka)
-            {
-                this._parallafka = parallafka;
+                this._committerTarget.Complete();
+                await this._committerTarget.Completion;
             }
-
-            public async ValueTask DisposeAsync()
+            catch (Exception e)
             {
-                this._parallafka._handlerShutdownCts.Cancel();
-                this._parallafka._pollerShutdownCts.Cancel();
-                this._parallafka._controllerHardStopCts.Cancel();
-
-                while (this._parallafka._controllerIsRunning || this._parallafka._pollerIsRunning)
-                {
-                    await Task.Delay(10);
-                }
-
-                await this._parallafka._consumer.DisposeAsync();
-            }
-        }
-
-        public class GracefulShutdownDisposeStrategy : IDisposeStrategy
-        {
-            private Parallafka<TKey, TValue> _parallafka;
-            private TimeSpan? _waitTimeout;
-            private bool _throwExceptionOnTimeout;
-
-            public GracefulShutdownDisposeStrategy(
-                Parallafka<TKey, TValue> parallafka,
-                TimeSpan? waitTimeout = null,
-                bool throwExceptionOnTimeout = true)
-            {
-                this._parallafka = parallafka;
-                this._waitTimeout = waitTimeout;
-                this._throwExceptionOnTimeout = throwExceptionOnTimeout;
-            }
-
-            public async ValueTask DisposeAsync()
-            {
-                var timeoutTask = Task.Delay(this._waitTimeout ?? TimeSpan.FromMilliseconds(int.MaxValue));
-                try
-                {
-                    this._parallafka._pollerShutdownCts.Cancel();
-                    await this.WaitUntilFinalOffsetsAreCommittedAsync(timeoutTask);
-                    this._parallafka._handlerShutdownCts.Cancel();
-                    this._parallafka._controllerHardStopCts.Cancel();
-                    await this.WaitForControllerToStopAsync(timeoutTask);
-                    await this.WaitForHandlersToStopAsync(timeoutTask);
-                    await this.WaitForPollerToStopAsync(timeoutTask);
-                }
-                catch (Exception e)
-                {
-                    this._parallafka._logger.LogError(e, "Error disposing");
-
-                    if (e is TimeoutException && !this._throwExceptionOnTimeout)
-                    {
-                        return;
-                    }
-
-                    throw;
-                }
-                finally
-                {
-                    await this._parallafka._consumer.DisposeAsync();
-                }
-            }
-
-            // TODO: Refactor these waiters
-
-            private async Task WaitUntilFinalOffsetsAreCommittedAsync(Task timeoutTask)
-            {
-                while (true)
-                {
-                    if (this._parallafka._maxOffsetPickedUpForHandlingByPartition.Values.All(offset => offset.IsCommitted))
-                    {
-                        break;
-                    }
-
-                    await Task.Delay(10);
-                    if (timeoutTask.IsCompleted)
-                    {
-                         throw new TimeoutException("Timed out waiting for final offsets to be committed");
-                    }
-                }
-            }
-
-            private async Task WaitForPollerToStopAsync(Task timeoutTask)
-            {
-                while (this._parallafka._pollerIsRunning)
-                {
-                    await Task.Delay(10);
-                    if (timeoutTask.IsCompleted)
-                    {
-                        throw new TimeoutException("Timed out waiting for poller to shut down");
-                    }
-                }
-            }
-
-            private async Task WaitForHandlersToStopAsync(Task timeoutTask)
-            {
-                while (this._parallafka._handlerThreadsAreRunning)
-                {
-                    await Task.Delay(10);
-                    if (timeoutTask.IsCompleted)
-                    {
-                        throw new TimeoutException($"Timed out waiting for {this._parallafka._nHandlerThreadsRunning} handlers to finish and shut down");
-                    }
-                }
-            }
-
-            private async Task WaitForControllerToStopAsync(Task timeoutTask)
-            {
-                // Assuming handlers and poller have stopped.
-                while (this._parallafka._controllerIsRunning)
-                {
-                    await Task.Delay(10);
-                    if (timeoutTask.IsCompleted)
-                    {
-                        throw new TimeoutException("Timed out waiting for Parallafka to shut down");
-                    }
-                }
+                this._logger.LogCritical(e, "Fatal error in Kafka poller thread");
             }
         }
 
@@ -445,10 +294,5 @@ namespace Parallafka
                 this.IsCommitted = isCommitted;
             }
         }
-    }
-
-    public interface IDisposeStrategy
-    {
-        ValueTask DisposeAsync();
     }
 }
