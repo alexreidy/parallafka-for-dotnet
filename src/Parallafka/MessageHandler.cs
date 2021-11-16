@@ -25,7 +25,10 @@ namespace Parallafka
         {
             this._messageHandlerAsync = messageHandlerAsync;
             this._logger = logger;
-            this._messageHandled = new BufferBlock<IKafkaMessage<TKey, TValue>>(); 
+            this._messageHandled = new BufferBlock<IKafkaMessage<TKey, TValue>>(new ExecutionDataflowBlockOptions
+            {
+                BoundedCapacity = 100
+            });
             this._stopToken = stopToken;
         }
 

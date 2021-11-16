@@ -117,7 +117,7 @@ namespace Parallafka
         }
 
         /// <summary>
-        /// Adds the message to the commit queue to eventually be committted
+        /// Adds the message to the commit queue to eventually be committed
         /// </summary>
         /// <param name="message"></param>
         public void EnqueueMessage(IKafkaMessage<TKey, TValue> message)

@@ -22,7 +22,10 @@ namespace Parallafka
             this._commitState = commitState;
             this._messageByKey = messageByKey;
             this._stopToken = stopToken;
-            this._messagesToHandle = new BufferBlock<IKafkaMessage<TKey, TValue>>();
+            this._messagesToHandle = new BufferBlock<IKafkaMessage<TKey, TValue>>(new DataflowBlockOptions
+            {
+                BoundedCapacity = 100
+            });
         }
 
         public ISourceBlock<IKafkaMessage<TKey, TValue>> MessagesToHandle => this._messagesToHandle;

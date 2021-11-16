@@ -40,7 +40,7 @@ namespace Parallafka
             var routingTarget = new ActionBlock<IKafkaMessage<TKey, TValue>>(router.RouteMessage,
                 new ExecutionDataflowBlockOptions
                 {
-                    BoundedCapacity = 999,
+                    BoundedCapacity = 100,
                     MaxDegreeOfParallelism = 1
                 });
 
@@ -54,6 +54,7 @@ namespace Parallafka
             var handlerTarget = new ActionBlock<IKafkaMessage<TKey, TValue>>(handler.HandleMessage,
                 new ExecutionDataflowBlockOptions
                 {
+                    BoundedCapacity = this._config.MaxQueuedMessages ?? 1000,
                     MaxDegreeOfParallelism = this._config.MaxDegreeOfParallelism
                 });
 
@@ -67,7 +68,7 @@ namespace Parallafka
             var committerTarget = new ActionBlock<IKafkaMessage<TKey, TValue>>(committer.TryCommitMessage,
                 new ExecutionDataflowBlockOptions
                 {
-                    BoundedCapacity = 333,
+                    BoundedCapacity = 100,
                     MaxDegreeOfParallelism = 1
                 });
 
@@ -80,7 +81,11 @@ namespace Parallafka
             var messageHandledTarget = new ActionBlock<IKafkaMessage<TKey, TValue>>(
                 m => Task.WhenAll(
                     finishedRouter.MessageHandlerFinished(m),
-                    committerTarget.SendAsync(m)));
+                    committerTarget.SendAsync(m)),
+                new ExecutionDataflowBlockOptions
+                {
+                    BoundedCapacity = 100
+                });
             handler.MessageHandled.LinkTo(messageHandledTarget);
 
             // poll kafka for messages and send them to the routingTarget

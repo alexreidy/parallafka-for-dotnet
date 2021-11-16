@@ -14,6 +14,11 @@ namespace Parallafka
         /// </summary>
         TimeSpan? CommitDelay { get; }
 
+        /// <summary>
+        /// Gets the maximum queued messages.  Defaults to 1000
+        /// </summary>
+        int? MaxQueuedMessages { get; }
+
         // TODO: adaptive mode flag: optimize throughput by tuning thread count
 
         // /// <summary>
