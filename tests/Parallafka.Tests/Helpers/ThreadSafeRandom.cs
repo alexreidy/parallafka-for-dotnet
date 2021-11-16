@@ -7,15 +7,15 @@ namespace Parallafka.Tests
 {
     public class ThreadSafeRandom : IDisposable
     {
-        private BlockingCollection<Random> _rngs = new BlockingCollection<Random>();
+        private readonly BlockingCollection<Random> _rngs = new BlockingCollection<Random>();
 
-        private int _minRngCount;
+        private readonly int _minRngCount;
 
-        private CancellationTokenSource _shutdownCts = new CancellationTokenSource();
+        private readonly CancellationTokenSource _shutdownCts = new CancellationTokenSource();
 
-        private bool _pruneThreadIsRunning = false;
+        private readonly Task _pruneThread;
 
-        private double _rngCollectionLockIsTaken = 0;
+        private int _rngCollectionLockIsTaken = 0;
 
         public ThreadSafeRandom(int minRngCount = 10)
         {
@@ -25,9 +25,8 @@ namespace Parallafka.Tests
                 this._rngs.Add(new Random());
             }
 
-            Task.Run(async () =>
+            this._pruneThread = Task.Run(async () =>
             {
-                this._pruneThreadIsRunning = true;
                 while (!this._shutdownCts.Token.IsCancellationRequested)
                 {
                     try
@@ -46,7 +45,6 @@ namespace Parallafka.Tests
                     {
                     }
                 }
-                this._pruneThreadIsRunning = false;
             });
         }
 
@@ -54,10 +52,7 @@ namespace Parallafka.Tests
         {
             this._shutdownCts.Cancel();
 
-            while (this._pruneThreadIsRunning)
-            {
-                Thread.Sleep(2);
-            }
+            this._pruneThread.Wait();
         }
 
         public async Task BorrowAsync(Func<Random, Task> useAsync)
