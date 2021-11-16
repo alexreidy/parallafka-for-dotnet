@@ -10,9 +10,7 @@ namespace Parallafka
     public class Parallafka<TKey, TValue> : IParallafka<TKey, TValue>
     {
         private readonly IKafkaConsumer<TKey, TValue> _consumer;
-
         private readonly IParallafkaConfig<TKey, TValue> _config;
-
         private readonly ILogger _logger;
 
         public static Action<string> WriteLine { get; set; } = (string s) => { };
@@ -73,53 +71,48 @@ namespace Parallafka
                     MaxDegreeOfParallelism = 1
                 });
 
-
             router.MessagesToHandle.LinkTo(handlerTarget);
             finishedRouter.MessagesToHandle.LinkTo(handlerTarget);
 
-            async Task SendCommitter(IKafkaMessage<TKey, TValue> m)
-            {
-                if (!await committerTarget.SendAsync(m))
-                {
-                    WriteLine($"CT: {m.Key} {m.Offset} SendAsync failed!");
-                }
-            }
+            // handled messages are sent to both:
+            // . the finished router (send the next message for the key)
+            // . the committer
             var messageHandledTarget = new ActionBlock<IKafkaMessage<TKey, TValue>>(
                 m => Task.WhenAll(
                     finishedRouter.MessageHandlerFinished(m),
-                    SendCommitter(m)));
-
+                    committerTarget.SendAsync(m)));
             handler.MessageHandled.LinkTo(messageHandledTarget);
-            
+
+            // poll kafka for messages and send them to the routingTarget
             await this.KafkaPollerThread(routingTarget, stopToken);
 
+            // done polling, wait for the routingTarget to finish
             routingTarget.Complete();
             await routingTarget.Completion;
 
+            // wait for the router to finish (it should already be done)
             router.MessagesToHandle.Complete();
             await router.MessagesToHandle.Completion;
-            
-            messagesByKey.Complete();
-            await messagesByKey.Completion;
 
-            finishedRouter.MessagesToHandle.Complete();
-            await finishedRouter.MessagesToHandle.Completion;
+            // wait for the finishedRoute to complete handling all the queued messages
+            finishedRouter.Complete();
+            await finishedRouter.Completion;
 
+            // wait for the message handler to complete (should already be done)
             handlerTarget.Complete();
             await handlerTarget.Completion;
-
             handler.MessageHandled.Complete();
             await handler.MessageHandled.Completion;
-            
             messageHandledTarget.Complete();
             await messageHandledTarget.Completion;
-            
+
+            // wait for the committer to finish
             committerTarget.Complete();
             await committerTarget.Completion;
-
             committer.Complete();
             await committer.Completion;
 
+            // commitState should be empty
             WriteLine($"ConsumeFinished: {commitState.GetStats()}");
         }
         

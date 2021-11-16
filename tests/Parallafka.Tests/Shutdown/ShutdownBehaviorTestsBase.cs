@@ -39,7 +39,7 @@ namespace Parallafka.Tests.Shutdown
                     CancellationTokenSource stopConsuming = new();
                     Task consumeTask = parallafka.ConsumeAsync(async msg =>
                     {
-                        this.Console.WriteLine($"Handler: {msg.Offset}");
+                        // this.Console.WriteLine($"Handler: {msg.Offset}");
 
                         Interlocked.Increment(ref nMessagesBeingHandled);
                         await rngs.BorrowAsync(async rng =>

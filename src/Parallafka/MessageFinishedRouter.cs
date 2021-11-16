@@ -17,6 +17,13 @@ namespace Parallafka
 
         public ISourceBlock<IKafkaMessage<TKey, TValue>> MessagesToHandle => this._messagesToHandle;
 
+        public Task Completion => this._messageByKey.Completion;
+
+        public void Complete()
+        {
+            this._messageByKey.Complete();
+        }
+
         public async Task MessageHandlerFinished(IKafkaMessage<TKey, TValue> message)
         {
             // If there are any messages with the same key queued, make the next one available for handling.
@@ -29,5 +36,6 @@ namespace Parallafka
                 }
             }
         }
+
     }
 }
