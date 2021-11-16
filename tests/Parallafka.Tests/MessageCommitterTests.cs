@@ -17,9 +17,9 @@ namespace Parallafka.Tests
             // given
             var consumer = new Mock<IKafkaConsumer<string, string>>();
             var logger = new Mock<ILogger>();
-            var commitState = new CommitState<string, string>();
+            var commitState = new CommitState<string, string>(int.MaxValue, default);
             var kafkaMessage = new KafkaMessage<string, string>("key", "value", new RecordOffset(0, 0));
-            commitState.EnqueueMessage(kafkaMessage);
+            await commitState.EnqueueMessageAsync(kafkaMessage);
             var mc = new MessageCommitter<string, string>(
                 consumer.Object,
                 commitState,
@@ -56,13 +56,13 @@ namespace Parallafka.Tests
             // given
             var consumer = new Mock<IKafkaConsumer<string, string>>();
             var logger = new Mock<ILogger>();
-            var commitState = new CommitState<string, string>();
+            var commitState = new CommitState<string, string>(int.MaxValue, default);
             var kafkaMessage1 = new KafkaMessage<string, string>("key", "value", new RecordOffset(0, 1));
             var kafkaMessage2 = new KafkaMessage<string, string>("key", "value", new RecordOffset(0, 2));
             var kafkaMessage3 = new KafkaMessage<string, string>("key", "value", new RecordOffset(0, 3));
-            commitState.EnqueueMessage(kafkaMessage1);
-            commitState.EnqueueMessage(kafkaMessage2);
-            commitState.EnqueueMessage(kafkaMessage3);
+            await commitState.EnqueueMessageAsync(kafkaMessage1);
+            await commitState.EnqueueMessageAsync(kafkaMessage2);
+            await commitState.EnqueueMessageAsync(kafkaMessage3);
             var mc = new MessageCommitter<string, string>(
                 consumer.Object,
                 commitState,
@@ -90,13 +90,13 @@ namespace Parallafka.Tests
             // given
             var consumer = new Mock<IKafkaConsumer<string, string>>();
             var logger = new Mock<ILogger>();
-            var commitState = new CommitState<string, string>();
+            var commitState = new CommitState<string, string>(int.MaxValue, default);
             var kafkaMessage1 = new KafkaMessage<string, string>("key", "value", new RecordOffset(0, 1));
             var kafkaMessage2 = new KafkaMessage<string, string>("key", "value", new RecordOffset(0, 2));
             var kafkaMessage3 = new KafkaMessage<string, string>("key", "value", new RecordOffset(0, 3));
-            commitState.EnqueueMessage(kafkaMessage1);
-            commitState.EnqueueMessage(kafkaMessage2);
-            commitState.EnqueueMessage(kafkaMessage3);
+            await commitState.EnqueueMessageAsync(kafkaMessage1);
+            await commitState.EnqueueMessageAsync(kafkaMessage2);
+            await commitState.EnqueueMessageAsync(kafkaMessage3);
             var mc = new MessageCommitter<string, string>(
                 consumer.Object,
                 commitState,

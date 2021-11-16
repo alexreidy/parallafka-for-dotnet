@@ -2,6 +2,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using Parallafka.KafkaConsumer;
 
 namespace Parallafka
@@ -22,8 +23,13 @@ namespace Parallafka
         private readonly Dictionary<int, Queue<IKafkaMessage<TKey, TValue>>> _messagesNotYetCommittedByPartition;
         private readonly ReaderWriterLockSlim _messagesNotYetCommittedByPartitionReaderWriterLock;
 
-        public CommitState()
+        private readonly SemaphoreSlim _canQueueMessage;
+        private readonly CancellationToken _stopToken;
+
+        public CommitState(int maxMessagesQueued, CancellationToken stopToken)
         {
+            this._canQueueMessage = new(maxMessagesQueued);
+            this._stopToken = stopToken;
             this._messagesNotYetCommittedByPartition = new();
             this._messagesNotYetCommittedByPartitionReaderWriterLock = new();
         }
@@ -107,6 +113,8 @@ namespace Parallafka
 
                     messagesNotYetCommitted.Dequeue();
 
+                    this._canQueueMessage.Release();
+
                     Parallafka<TKey, TValue>.WriteLine($"CS:DequeueMessage: {msg.Key} {msg.Offset}");
                 }
 
@@ -120,7 +128,7 @@ namespace Parallafka
         /// Adds the message to the commit queue to eventually be committed
         /// </summary>
         /// <param name="message"></param>
-        public void EnqueueMessage(IKafkaMessage<TKey, TValue> message)
+        public async Task EnqueueMessageAsync(IKafkaMessage<TKey, TValue> message)
         {
             Queue<IKafkaMessage<TKey, TValue>> messagesInPartition;
 
@@ -150,6 +158,9 @@ namespace Parallafka
                     this._messagesNotYetCommittedByPartitionReaderWriterLock.ExitWriteLock();
                 }
             }
+
+            // ReSharper disable once InconsistentlySynchronizedField
+            await this._canQueueMessage.WaitAsync(-1, this._stopToken);
 
             lock (messagesInPartition)
             {

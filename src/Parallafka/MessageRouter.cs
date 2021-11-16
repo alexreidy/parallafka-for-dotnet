@@ -24,7 +24,7 @@ namespace Parallafka
             this._stopToken = stopToken;
             this._messagesToHandle = new BufferBlock<IKafkaMessage<TKey, TValue>>(new DataflowBlockOptions
             {
-                BoundedCapacity = 100
+                BoundedCapacity = 1
             });
         }
 
@@ -32,7 +32,7 @@ namespace Parallafka
 
         public async Task RouteMessage(IKafkaMessage<TKey, TValue> message)
         {
-            this._commitState.EnqueueMessage(message);
+            await this._commitState.EnqueueMessageAsync(message);
 
             if (!this._messageByKey.TryAddMessageToHandle(message))
             {

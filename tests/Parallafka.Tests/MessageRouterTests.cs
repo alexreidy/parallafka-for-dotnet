@@ -1,11 +1,6 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading;
+﻿using System.Threading;
 using System.Threading.Tasks;
 using System.Threading.Tasks.Dataflow;
-using Moq;
 using Parallafka.KafkaConsumer;
 using Xunit;
 
@@ -17,7 +12,7 @@ namespace Parallafka.Tests
         public async Task VerifyMessageRoutedOnlyOnce()
         {
             // given
-            var cs = new CommitState<string, string>();
+            var cs = new CommitState<string, string>(int.MaxValue, default);
             var mbk = new MessagesByKey<string, string>();
             var mr = new MessageRouter<string, string>(cs, mbk, default);
             var message1 = new KafkaMessage<string, string>("key", "value", new RecordOffset(0, 0));
@@ -45,7 +40,7 @@ namespace Parallafka.Tests
         public async Task VerifyMessageRoutedAfterMessageCleared()
         {
             // given
-            var cs = new CommitState<string, string>();
+            var cs = new CommitState<string, string>(int.MaxValue, default);
             var mbk = new MessagesByKey<string, string>();
             var mr = new MessageRouter<string, string>(cs, mbk, default);
             var message1 = new KafkaMessage<string, string>("key", "value", new RecordOffset(0, 0));

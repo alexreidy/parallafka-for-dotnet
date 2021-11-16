@@ -1,4 +1,7 @@
-﻿using System.Linq;
+﻿using System;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Parallafka.KafkaConsumer;
 using Xunit;
 
@@ -7,15 +10,51 @@ namespace Parallafka.Tests
     public class CommitStateTests
     {
         [Fact]
-        public void QueueStateIsCorrect()
+        public async Task EnqueuesOnlyUpToMax()
         {
             //  given
-            var cs = new CommitState<string, string>();
+            var stop = new CancellationTokenSource();
+            var cs = new CommitState<string, string>(5, stop.Token);
+            var messages = Enumerable.Range(0, 6)
+                .Select(i => new KafkaMessage<string, string>("key", "value", new RecordOffset(0, i)))
+                .ToList();
+
+            foreach (var message in messages.Take(5))
+            {
+                await cs.EnqueueMessageAsync(message);
+            }
+
+            var message6 = messages.Last();
+            var waitToken = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+
+            // when/then
+            var enqueueTask = cs.EnqueueMessageAsync(message6);
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            {
+                var task = await Task.WhenAny(enqueueTask, Task.Delay(-1, waitToken.Token));
+                await task;
+            });
+
+            // when
+            var message1 = messages.First();
+            message1.WasHandled = true;
+
+            // then
+            Assert.True(cs.TryGetMessageToCommit(message1, out _));
+            await enqueueTask;
+        }
+
+
+        [Fact]
+        public async Task QueueStateIsCorrect()
+        {
+            //  given
+            var cs = new CommitState<string, string>(int.MaxValue, default);
             var km = new KafkaMessage<string, string>("key", "value", new RecordOffset(0, 0));
             Assert.False(cs.TryGetMessageToCommit(km, out _));
 
             // when
-            cs.EnqueueMessage(km);
+            await cs.EnqueueMessageAsync(km);
 
             // then
             Assert.False(cs.TryGetMessageToCommit(km, out _));
@@ -29,17 +68,17 @@ namespace Parallafka.Tests
         }
 
         [Fact]
-        public void QueueStateForSeveralOffsetsIsCorrect()
+        public async Task QueueStateForSeveralOffsetsIsCorrect()
         {
             // given
-            var cs = new CommitState<string, string>();
+            var cs = new CommitState<string, string>(int.MaxValue, default);
             var kms = Enumerable.Range(1, 5).Select(i =>
                 new KafkaMessage<string, string>("key", "value", new RecordOffset(0, i))).ToList();
 
             // when
             foreach (var km in kms)
             {
-                cs.EnqueueMessage(km);
+                await cs.EnqueueMessageAsync(km);
             }
 
             IKafkaMessage<string, string> messageToCommit;
@@ -69,17 +108,17 @@ namespace Parallafka.Tests
         }
 
         [Fact]
-        public void NoMessagesToCommitWhenNoMessagesHandled()
+        public async Task NoMessagesToCommitWhenNoMessagesHandled()
         {
             // given
-            var cs = new CommitState<string, string>();
+            var cs = new CommitState<string, string>(int.MaxValue, default);
             var kms = Enumerable.Range(1, 5).Select(i =>
                 new KafkaMessage<string, string>("key", "value", new RecordOffset(0, i))).ToList();
 
             // when
             foreach (var km in kms)
             {
-                cs.EnqueueMessage(km);
+                await cs.EnqueueMessageAsync(km);
             }
 
             // then
@@ -87,17 +126,17 @@ namespace Parallafka.Tests
         }
         
         [Fact]
-        public void LatestMessageToCommitWhenAllMessagesHandled()
+        public async Task LatestMessageToCommitWhenAllMessagesHandled()
         {
             // given
-            var cs = new CommitState<string, string>();
+            var cs = new CommitState<string, string>(int.MaxValue, default);
             var kms = Enumerable.Range(1, 5).Select(i =>
                 new KafkaMessage<string, string>("key", "value", new RecordOffset(0, i))).ToList();
 
             foreach (var km in kms)
             {
                 km.WasHandled = true;
-                cs.EnqueueMessage(km);
+                await cs.EnqueueMessageAsync(km);
             }
 
             // when
@@ -112,10 +151,10 @@ namespace Parallafka.Tests
         [InlineData(1,5)]
         [InlineData(3,5)]
         [InlineData(12,65)]
-        public void LatestMessageFromEachPartitionToCommitWhenAllMessagesHandled(int partitions, int messages)
+        public async Task LatestMessageFromEachPartitionToCommitWhenAllMessagesHandled(int partitions, int messages)
         {
             // given
-            var cs = new CommitState<string, string>();
+            var cs = new CommitState<string, string>(int.MaxValue, default);
             var kms =
                 Enumerable.Range(1, partitions).SelectMany(p =>
                     Enumerable.Range(1, messages).Select(i =>
@@ -124,7 +163,7 @@ namespace Parallafka.Tests
             foreach (var km in kms)
             {
                 km.WasHandled = true;
-                cs.EnqueueMessage(km);
+                await cs.EnqueueMessageAsync(km);
             }
 
             // when

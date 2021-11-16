@@ -30,9 +30,10 @@ namespace Parallafka
             Func<IKafkaMessage<TKey, TValue>, Task> messageHandlerAsync,
             CancellationToken stopToken)
         {
+            var maxQueuedMessages = this._config.MaxQueuedMessages ?? 1000;
             // Are there any deadlocks or performance issues with these caps in general?
             var localStop = new CancellationTokenSource();
-            var commitState = new CommitState<TKey, TValue>();
+            var commitState = new CommitState<TKey, TValue>(maxQueuedMessages, localStop.Token);
             var messagesByKey = new MessagesByKey<TKey, TValue>();
 
             // the message router ensures messages are handled by key in order
@@ -40,7 +41,7 @@ namespace Parallafka
             var routingTarget = new ActionBlock<IKafkaMessage<TKey, TValue>>(router.RouteMessage,
                 new ExecutionDataflowBlockOptions
                 {
-                    BoundedCapacity = 100,
+                    BoundedCapacity = 1,
                     MaxDegreeOfParallelism = 1
                 });
 
@@ -54,7 +55,7 @@ namespace Parallafka
             var handlerTarget = new ActionBlock<IKafkaMessage<TKey, TValue>>(handler.HandleMessage,
                 new ExecutionDataflowBlockOptions
                 {
-                    BoundedCapacity = this._config.MaxQueuedMessages ?? 1000,
+                    BoundedCapacity = maxQueuedMessages,
                     MaxDegreeOfParallelism = this._config.MaxDegreeOfParallelism
                 });
 
@@ -84,7 +85,7 @@ namespace Parallafka
                     committerTarget.SendAsync(m)),
                 new ExecutionDataflowBlockOptions
                 {
-                    BoundedCapacity = 100
+                    BoundedCapacity = 1000
                 });
             handler.MessageHandled.LinkTo(messageHandledTarget);
 
@@ -144,8 +145,9 @@ namespace Parallafka
                         {
                             try
                             {
-                                // WriteLine($"RT: Sending {message.Key} {message.Offset}");
+                                WriteLine($"Poller: Sending {message.Key} {message.Offset}");
                                 await routingTarget.SendAsync(message, stopToken);
+                                WriteLine($"Poller: Sent {message.Key} {message.Offset}");
                             }
                             catch (OperationCanceledException)
                             {

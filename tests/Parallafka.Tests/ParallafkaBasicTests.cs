@@ -1,10 +1,12 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Moq;
 using Parallafka.KafkaConsumer;
 using Xunit;
 using Xunit.Abstractions;
@@ -13,6 +15,63 @@ namespace Parallafka.Tests
 {
     public class ParallafkaBasicTests
     {
+        [Theory]
+        [InlineData(1234567,100,1)]
+        [InlineData(1234567,100,5)]
+        [InlineData(12,1000,10)]
+        public async Task MaxMessageQueuedIsObeyed(int partitions, int maxMessagesQueued, int maxDegreeOfParallelism)
+        {
+            // given
+            var stop = new CancellationTokenSource();
+            var giveUp = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var countTotalMessages = maxMessagesQueued * 2;
+            var testCases = new TestCases(partitions, countTotalMessages);
+            var consumer = new TestConsumer<string, string>(testCases.Messages);
+            var logger = new Mock<ILogger>();
+            //Parallafka<string, string>.WriteLine = s => this._console.WriteLine(s);
+
+            var pk = new Parallafka<string, string>(consumer, new ParallafkaConfig<string, string>
+            {
+                Logger = logger.Object,
+                MaxDegreeOfParallelism = maxDegreeOfParallelism,
+                MaxQueuedMessages = maxMessagesQueued
+            });
+
+            var messagesConsumed = 0;
+
+            // when
+            var consumerTask = pk.ConsumeAsync(async m =>
+                {
+                    Interlocked.Increment(ref messagesConsumed);
+                    try
+                    {
+                        await Task.Delay(-1, stop.Token);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                    }
+                },
+                stop.Token);
+
+            while (consumer.MessagesQueued < maxMessagesQueued)
+            {
+                await Task.Delay(100, giveUp.Token);
+            }
+
+            // then
+            await Task.Delay(TimeSpan.FromSeconds(1));
+            this._console.WriteLine($"Messages queued before stop: {consumer.MessagesQueued}");
+            this._console.WriteLine($"Messages handled before stop: {messagesConsumed}");
+
+            stop.Cancel();
+            await consumerTask;
+
+            this._console.WriteLine($"Messages queued after stop: {consumer.MessagesQueued}");
+            this._console.WriteLine($"Messages handled after stop: {messagesConsumed}");
+
+            Assert.True(messagesConsumed >= maxMessagesQueued && messagesConsumed <= maxMessagesQueued + 2);
+        }
+
         [Theory]
         [InlineData(42, 0, 7)]
         [InlineData(1, 10, 7)]
@@ -23,21 +82,16 @@ namespace Parallafka.Tests
         [InlineData(1, 1000, 1)]
         public async Task ConsumedMessagesAndCommitsMatch(int partitions, int countTotalMessages, int maxDegreeOfParallelism)
         {
+            // given
             var stop = new CancellationTokenSource();
-            var offsets = new int[partitions];
-            var messages = Enumerable.Range(1, countTotalMessages)
-                .Select(i => new KafkaMessage<string, string>(
-                    $"key{i % partitions}",
-                    $"{i}",
-                    new RecordOffset(i % partitions, Interlocked.Increment(ref offsets[i % partitions]))))
-                .ToList();
-
-            var consumer = new TestConsumer<string, string>(messages);
+            var testCases = new TestCases(partitions, countTotalMessages);
+            var consumer = new TestConsumer<string, string>(testCases.Messages);
+            var logger = new Mock<ILogger>();
             // Parallafka<string, string>.WriteLine = s => this._console.WriteLine(s);
 
             var pk = new Parallafka<string, string>(consumer, new ParallafkaConfig<string, string>
             {
-                Logger = new TestLogger(),
+                Logger = logger.Object,
                 MaxDegreeOfParallelism = maxDegreeOfParallelism
             });
 
@@ -48,6 +102,7 @@ namespace Parallafka.Tests
                 stop.Cancel();
             }
 
+            // when
             await pk.ConsumeAsync(async m =>
                 {
                     await Task.Yield();
@@ -59,12 +114,13 @@ namespace Parallafka.Tests
                 },
                 stop.Token);
 
+            // then
             Assert.Equal(countTotalMessages, messagesConsumed);
 
             if (countTotalMessages > 0)
             {
                 var lastCommit = consumer.Commits.Last();
-                Assert.Equal(offsets[lastCommit.Partition % partitions], lastCommit.Offset);
+                Assert.Equal(testCases.Offsets[lastCommit.Partition % partitions], lastCommit.Offset);
             }
             else
             {
@@ -72,27 +128,21 @@ namespace Parallafka.Tests
             }
         }
 
-        private class TestLogger : ILogger
+        private class TestCases
         {
-            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception exception, Func<TState, Exception, string> formatter)
-            {
-            }
+            public long[] Offsets { get; }
+            public List<KafkaMessage<string, string>> Messages { get; }
 
-            public bool IsEnabled(LogLevel logLevel)
+            public TestCases(int numPartitions, int countTotalMessages)
             {
-                return true;
-            }
-
-            public IDisposable BeginScope<TState>(TState state)
-            {
-                return new D();
-            }
-
-            private class D : IDisposable
-            {
-                public void Dispose()
-                {
-                }
+                this.Offsets = new long[numPartitions];
+                this.Messages = Enumerable.Range(1, countTotalMessages)
+                    .Select(i => new KafkaMessage<string, string>(
+                        $"key{i % numPartitions}",
+                        $"{i}",
+                        new RecordOffset(i % numPartitions,
+                            Interlocked.Increment(ref this.Offsets[i % numPartitions]) - 1)))
+                    .ToList();
             }
         }
 
@@ -100,10 +150,14 @@ namespace Parallafka.Tests
         {
             private readonly IEnumerator<IKafkaMessage<TKey, TValue>> _enumerator;
 
+            private int _messagesQueued;
+
             public TestConsumer(IEnumerable<IKafkaMessage<TKey, TValue>> messages)
             {
                 this._enumerator = messages.GetEnumerator();
             }
+
+            public int MessagesQueued => this._messagesQueued;
 
             public List<IRecordOffset> Commits { get; } = new List<IRecordOffset>();
 
@@ -132,6 +186,7 @@ namespace Parallafka.Tests
                     }
                 }
 
+                Interlocked.Increment(ref this._messagesQueued);
                 return _enumerator.Current;
             }
 
