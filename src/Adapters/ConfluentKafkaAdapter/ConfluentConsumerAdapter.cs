@@ -58,11 +58,14 @@ namespace Parallafka.Adapters.ConfluentKafka
                 }
                 while (!cancellationToken.IsCancellationRequested);
             }
-            catch (OperationCanceledException e)
+            catch (OperationCanceledException)
             {
                 return null;
             }
-            IKafkaMessage<TKey, TValue> msg = new KafkaMessage<TKey, TValue>(result.Message.Key, result.Message.Value,
+
+            IKafkaMessage<TKey, TValue> msg = new KafkaMessage<TKey, TValue>(
+                result.Message.Key,
+                result.Message.Value,
                 new RecordOffset(result.Partition, result.Offset));
             return msg;
         }

@@ -9,19 +9,18 @@ namespace Parallafka.IntegrationTests.OrderGuarantee
 {
     public class OrderGuaranteeTests : OrderGuaranteeTestBase
     {
-        private readonly TestKafkaTopicProvider _topic;
+        private readonly RealKafkaTopicProvider _topic = new($"ParallafkaOrderGuaranteeTest-{Guid.NewGuid()}");
 
         protected override ITestKafkaTopic Topic => this._topic;
-
-        public OrderGuaranteeTests(ITestOutputHelper console) : base(console)
-        {
-            this._topic = new TestKafkaTopicProvider($"ParallafkaOrderGuaranteeTest-{Guid.NewGuid()}");
-        }
 
         [Fact]
         public override Task TestFifoOrderIsPreservedForSameKeyAsync()
         {
             return base.TestFifoOrderIsPreservedForSameKeyAsync();
+        }
+
+        public OrderGuaranteeTests(ITestOutputHelper console) : base(console)
+        {
         }
     }
 }

@@ -9,19 +9,18 @@ namespace Parallafka.IntegrationTests.Shutdown
 {
     public class ShutdownBehaviorTests : ShutdownBehaviorTestsBase
     {
-        private readonly TestKafkaTopicProvider _topic;
+        private readonly RealKafkaTopicProvider _topic = new($"ParallafkaShutdownBehaviorTest-{Guid.NewGuid()}");
 
         protected override ITestKafkaTopic Topic => this._topic;
-
-        public ShutdownBehaviorTests(ITestOutputHelper console) : base(console)
-        {
-            this._topic = new TestKafkaTopicProvider($"ParallafkaShutdownBehaviorTest-{Guid.NewGuid()}");
-        }
 
         [Fact]
         public override Task TestGracefulShutdownAsync()
         {
             return base.TestGracefulShutdownAsync();
+        }
+
+        public ShutdownBehaviorTests(ITestOutputHelper console) : base(console)
+        {
         }
     }
 }

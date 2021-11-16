@@ -17,6 +17,7 @@
     <Title>Parallafka adapter for the Confluent Kafka consumer</Title>
     <Version>0.9.0</Version>
     <Description>Adapts Confluent's Kafka consumer client for use with Parallafka</Description>
+    <RootNamespace>Parallafka.Adapters.ConfluentKafka</RootNamespace>
   </PropertyGroup>
 
 </Project>
