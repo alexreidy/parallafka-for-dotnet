@@ -5,7 +5,7 @@ using System.Threading;
 using Parallafka.KafkaConsumer;
 using Xunit;
 
-namespace Parallafka.Tests.OrderGuarantee
+namespace Parallafka.Tests.Helpers
 {
     public class ConsumptionVerifier
     {

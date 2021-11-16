@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Threading;
 using System.Threading.Tasks;
 using Parallafka.KafkaConsumer;
+using Parallafka.Tests.Helpers;
 using Parallafka.Tests.OrderGuarantee;
 using Xunit;
 using Xunit.Abstractions;
