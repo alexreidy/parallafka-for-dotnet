@@ -84,6 +84,30 @@ namespace Parallafka.Tests
             }
         }
 
+        public void Borrow(Action<Random> use)
+        {
+            Random rng = null;
+            this.WithLockOnRngCollection(() =>
+            {
+                if (!this._rngs.TryTake(out rng))
+                {
+                    rng = new Random();
+                }
+            });
+
+            try
+            {
+                use(rng);
+            }
+            finally
+            {
+                this.WithLockOnRngCollection(() =>
+                {
+                    this._rngs.Add(rng);
+                });
+            }
+        }
+
         /// <summary></summary>
         /// <param name="act"></param>
         /// <returns>False if the lock was not available</returns>
