@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading.Tasks;
 using Parallafka.KafkaConsumer;
 
@@ -22,6 +23,9 @@ namespace Parallafka
             this.Completion = new TaskCompletionSource().Task;
         }
 
+        /// <summary>
+        /// Indicates to the instance that processing should be finished when there's no more work queued
+        /// </summary>
         public void Complete()
         {
             this._completed = new();
@@ -36,9 +40,18 @@ namespace Parallafka
             }
         }
         
+        /// <summary>
+        /// A task that is completed when the instance is finished processing
+        /// </summary>
         public Task Completion { get; private set; }
         
-        public bool TryGetNextMessageToHandle(IKafkaMessage<TKey, TValue> message, out IKafkaMessage<TKey, TValue> nextMessage)
+        /// <summary>
+        /// Given a message, attempts to return another message to handle for the same message key
+        /// </summary>
+        /// <param name="message">The message that was handled</param>
+        /// <param name="nextMessage">The next message that should be handled</param>
+        /// <returns>True if a nextMessage was found</returns>
+        public bool TryGetNextMessageToHandle(IKafkaMessage<TKey, TValue> message, [NotNullWhen(true)] out IKafkaMessage<TKey, TValue> nextMessage)
         {
             lock (this._messagesToHandleForKey)
             {

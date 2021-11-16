@@ -1,10 +1,16 @@
 ﻿using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading;
 using Parallafka.KafkaConsumer;
 
 namespace Parallafka
 {
+    /// <summary>
+    /// Keeps track of messages that need to be committed.
+    /// </summary>
+    /// <typeparam name="TKey"></typeparam>
+    /// <typeparam name="TValue"></typeparam>
     internal class CommitState<TKey, TValue>
     {
         /// <summary>
@@ -22,6 +28,9 @@ namespace Parallafka
             this._messagesNotYetCommittedByPartitionReaderWriterLock = new();
         }
 
+        /// <summary>
+        /// Returns an enumeration of messages that are ready to be committed to kafka
+        /// </summary>
         public IEnumerable<IKafkaMessage<TKey, TValue>> GetMessagesToCommit()
         {
             List<Queue<IKafkaMessage<TKey, TValue>>> allQueues;
@@ -60,7 +69,13 @@ namespace Parallafka
             }
         }
 
-        public bool TryGetMessageToCommit(IKafkaMessage<TKey, TValue> message, out IKafkaMessage<TKey, TValue> messageToCommit)
+        /// <summary>
+        /// Given a message ready to be committed, find a message to commit up to and including the message
+        /// </summary>
+        /// <param name="message">The message that could be committed</param>
+        /// <param name="messageToCommit">The message that should be committed</param>
+        /// <returns>True if a message was found, false otherwise</returns>
+        public bool TryGetMessageToCommit(IKafkaMessage<TKey, TValue> message, [NotNullWhen(true)] out IKafkaMessage<TKey, TValue> messageToCommit)
         {
             messageToCommit = null;
             Queue<IKafkaMessage<TKey, TValue>> messagesNotYetCommitted;
@@ -101,6 +116,10 @@ namespace Parallafka
             }
         }
 
+        /// <summary>
+        /// Adds the message to the commit queue to eventually be committted
+        /// </summary>
+        /// <param name="message"></param>
         public void EnqueueMessage(IKafkaMessage<TKey, TValue> message)
         {
             Queue<IKafkaMessage<TKey, TValue>> messagesInPartition;

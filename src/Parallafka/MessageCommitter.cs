@@ -64,7 +64,7 @@ namespace Parallafka
             }
 
             await CommitMessage(messageToCommit);
-            return true;
+            return messageToCommit == message;
         }
 
         /// <summary>

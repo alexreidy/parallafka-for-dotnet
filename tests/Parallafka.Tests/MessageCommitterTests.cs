@@ -29,9 +29,18 @@ namespace Parallafka.Tests
             kafkaMessage.WasHandled = wasHandled;
 
             // when
-            await mc.TryCommitMessage(kafkaMessage);
+            var wasCommitted = await mc.TryCommitMessage(kafkaMessage);
 
             // then
+            if (wasHandled)
+            {
+                Assert.True(wasCommitted);
+            }
+            else
+            {
+                Assert.False(wasCommitted);
+            }
+
             consumer.Verify(c => c.CommitAsync(It.Is<IRecordOffset>(r => r.Offset == 0 && r.Partition == 0)),
                 wasHandled
                     ? Times.Once
@@ -65,9 +74,10 @@ namespace Parallafka.Tests
             kafkaMessage3.WasHandled = false;
 
             // when
-            await mc.TryCommitMessage(kafkaMessage3);
+            var wasCommitted = await mc.TryCommitMessage(kafkaMessage3);
 
             // then
+            Assert.False(wasCommitted);
             consumer.Verify(c => c.CommitAsync(It.Is<IRecordOffset>(r => r.Equals(kafkaMessage2.Offset))), Times.Once);
             consumer.VerifyNoOtherCalls();
 
@@ -98,9 +108,10 @@ namespace Parallafka.Tests
             kafkaMessage3.WasHandled = true;
 
             // when
-            await mc.TryCommitMessage(kafkaMessage3);
+            var wasCommitted = await mc.TryCommitMessage(kafkaMessage3);
 
             // then
+            Assert.True(wasCommitted);
             consumer.Verify(c => c.CommitAsync(It.Is<IRecordOffset>(r => r.Equals(kafkaMessage3.Offset))), Times.Once);
             consumer.VerifyNoOtherCalls();
 
