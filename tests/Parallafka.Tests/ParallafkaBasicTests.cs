@@ -120,7 +120,7 @@ namespace Parallafka.Tests
             if (countTotalMessages > 0)
             {
                 var lastCommit = consumer.Commits.Last();
-                Assert.Equal(testCases.Offsets[lastCommit.Partition % partitions], lastCommit.Offset);
+                Assert.Equal(testCases.Offsets[lastCommit.Partition % partitions] - 1, lastCommit.Offset);
             }
             else
             {
