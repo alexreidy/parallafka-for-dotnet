@@ -4,6 +4,7 @@ using Parallafka.IntegrationTests;
 using Parallafka.Tests;
 using Parallafka.Tests.Contracts;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace Parallafka.AdapterTests.ConfluentKafkaAdapter.Tests
 {
@@ -23,6 +24,10 @@ namespace Parallafka.AdapterTests.ConfluentKafkaAdapter.Tests
         public override Task RawConsumerHangsAtPartitionEndsTillNewMessageOrCancellationAsync()
         {
             return base.RawConsumerHangsAtPartitionEndsTillNewMessageOrCancellationAsync();
+        }
+
+        public ConsumerPollTests(ITestOutputHelper console) : base(console)
+        {
         }
     }
 }

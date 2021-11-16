@@ -13,15 +13,15 @@ namespace Parallafka.IntegrationTests.Commits
 
         protected override ITestKafkaTopic Topic => this._topic;
 
-        public CommitTests(ITestOutputHelper output)
+        public CommitTests(ITestOutputHelper console) : base(console)
         {
-            this._topic = new TestKafkaTopicProvider($"ParallafkaCommitTest-{Guid.NewGuid().ToString()}");
+            this._topic = new TestKafkaTopicProvider($"ParallafkaCommitTest-{Guid.NewGuid()}");
         }
 
         [Fact]
-        public override Task MessagesAreNotComittedTillAllEarlierOnesAreHandledAsync()
+        public override Task MessagesAreNotCommittedTillAllEarlierOnesAreHandledAsync()
         {
-            return base.MessagesAreNotComittedTillAllEarlierOnesAreHandledAsync();
+            return base.MessagesAreNotCommittedTillAllEarlierOnesAreHandledAsync();
         }
     }
 }

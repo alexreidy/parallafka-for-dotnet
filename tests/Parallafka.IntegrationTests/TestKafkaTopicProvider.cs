@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using Confluent.Kafka;
 using Confluent.Kafka.Admin;
@@ -11,15 +12,17 @@ namespace Parallafka.IntegrationTests
 {
     public class TestKafkaTopicProvider : ITestKafkaTopic
     {
-        private IAdminClient _adminClient;
+        private readonly IAdminClient _adminClient;
 
-        private string _topicName;
+        private readonly string _topicName;
 
-        private ClientConfig _clientConfig;
+        private readonly ClientConfig _clientConfig;
 
-        private IProducer<string, string> _producer;
+        private readonly IProducer<string, string> _producer;
 
         private bool _topicExists = false;
+
+        private readonly SemaphoreSlim _creatorLock = new(1);
 
         public Task InitializeAsync()
         {
@@ -89,8 +92,14 @@ namespace Parallafka.IntegrationTests
                 return;
             }
 
+            await _creatorLock.WaitAsync();
             try
             {
+                if (this._topicExists)
+                {
+                    return;
+                }
+
                 await this._adminClient.CreateTopicsAsync(new[]
                 {
                     new TopicSpecification()
@@ -107,6 +116,10 @@ namespace Parallafka.IntegrationTests
             }
             catch (Exception)
             {
+            }
+            finally
+            {
+                this._creatorLock.Release();
             }
         }
     }

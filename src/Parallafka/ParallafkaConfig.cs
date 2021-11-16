@@ -10,5 +10,7 @@ namespace Parallafka
         public ILogger Logger { get; set; } =
             LoggerFactory.Create(builder => builder.AddConsole())
                 .CreateLogger<IParallafka<TKey, TValue>>();
+
+        public TimeSpan? CommitDelay { get; set; } = null;
     }
 }

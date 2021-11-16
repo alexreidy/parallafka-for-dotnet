@@ -6,7 +6,7 @@ namespace Parallafka.KafkaConsumer
 
         TValue Value { get; }
 
-        IRecordOffset Offset { get; set; } // TODO: not null
+        IRecordOffset Offset { get; } // TODO: not null
 
         bool WasHandled { get; set; } // TODO: this is internal
     }

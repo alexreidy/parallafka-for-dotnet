@@ -15,7 +15,7 @@ namespace Parallafka.IntegrationTests.Performance
 
         public ThroughputTests(ITestOutputHelper output) : base(output)
         {
-            this._topic = new TestKafkaTopicProvider($"ParallafkaThroughputTest-{Guid.NewGuid().ToString()}");
+            this._topic = new TestKafkaTopicProvider($"ParallafkaThroughputTest-{Guid.NewGuid()}");
         }
 
         [Fact]

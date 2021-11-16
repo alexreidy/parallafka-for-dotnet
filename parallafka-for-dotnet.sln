@@ -24,6 +24,7 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "SolutionItems", "SolutionItems", "{F501E9FD-17B8-4949-BD33-5241B6E8A121}"
 	ProjectSection(SolutionItems) = preProject
 		.gitignore = .gitignore
+		docker-compose.kafka.yaml = docker-compose.kafka.yaml
 		LICENSE = LICENSE
 		NOTICE = NOTICE
 		README.md = README.md

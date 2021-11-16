@@ -18,6 +18,6 @@ namespace Parallafka.KafkaConsumer
         /// </summary>
         Task<IKafkaMessage<TKey, TValue>> PollAsync(CancellationToken cancellationToken); // TODO: What's the contract as far as nulls, op cancelled ex
 
-        Task CommitAsync(IEnumerable<IRecordOffset> offsets);
+        Task CommitAsync(IRecordOffset offset);
     }
 }
