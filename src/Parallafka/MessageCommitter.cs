@@ -113,34 +113,24 @@ namespace Parallafka
             {
                 try
                 {
-                    CommitPartitionState state;
-                    lock (this._committedStates)
+                    if (!this._committedStates.TryGetValue(messageToCommit.Offset.Partition, out CommitPartitionState state))
                     {
-                        if (!this._committedStates.TryGetValue(messageToCommit.Offset.Partition, out state))
-                        {
-                            this._committedStates[messageToCommit.Offset.Partition] = state = new();
-                        }
+                        this._committedStates[messageToCommit.Offset.Partition] = state = new();
                     }
 
                     // commit per partition from one task at a time
-                    await state.Lock.WaitAsync(this._stopToken);
-                    try
+                    if (state.Offset >= messageToCommit.Offset.Offset)
                     {
-                        if (state.Offset >= messageToCommit.Offset.Offset)
-                        {
-                            break;
-                        }
-
-                        Parallafka<TKey, TValue>.WriteLine($"MsgCommitter: committing {messageToCommit.Offset}");
-
-                        // TODO: inject CancelToken for hard-stop strategy?
-                        await this._consumer.CommitAsync(messageToCommit.Offset);
-                        state.Offset = messageToCommit.Offset.Offset;
+                        // sanity check, this shouldn't happen
+                        this._logger.Log(LogLevel.Error, "Commit offset out of order");
+                        break;
                     }
-                    finally
-                    {
-                        state.Lock.Release();
-                    }
+
+                    Parallafka<TKey, TValue>.WriteLine($"MsgCommitter: committing {messageToCommit.Offset}");
+
+                    // TODO: inject CancelToken for hard-stop strategy?
+                    await this._consumer.CommitAsync(messageToCommit.Offset);
+                    state.Offset = messageToCommit.Offset.Offset;
 
                     break;
                 }
@@ -154,8 +144,6 @@ namespace Parallafka
 
         private class CommitPartitionState
         {
-            public SemaphoreSlim Lock { get; } = new(1);
-
             public long Offset { get; set; } = -1;
         }
     }
