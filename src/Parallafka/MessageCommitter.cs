@@ -102,9 +102,7 @@ namespace Parallafka
         private async Task GetAndCommitAnyMessages()
         {
             Parallafka<TKey, TValue>.WriteLine("GetAndCommitAnyMessages start");
-            var messages = this._commitState.GetMessagesToCommit().ToList();
-
-            foreach (var message in messages)
+            foreach (var message in this._commitState.GetMessagesToCommit())
             {
                 await CommitMessage(message);
             }
