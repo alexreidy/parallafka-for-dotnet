@@ -29,7 +29,7 @@ namespace Parallafka
                 new ExecutionDataflowBlockOptions
                 {
                     MaxDegreeOfParallelism = 1,
-                    BoundedCapacity = 1
+                    BoundedCapacity = 2
                 });
 
             this._committedStates = new();
