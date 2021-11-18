@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Threading.Tasks.Dataflow;
@@ -15,7 +14,6 @@ namespace Parallafka
         private readonly ILogger _logger;
         private readonly CancellationToken _stopToken;
         private readonly CancellationTokenSource _stopTimer;
-        private readonly Dictionary<int, CommitPartitionState> _committedStates;
         private readonly ActionBlock<int> _commitBlock;
 
         public MessageCommitter(
@@ -32,7 +30,6 @@ namespace Parallafka
                     BoundedCapacity = 2
                 });
 
-            this._committedStates = new();
             this._consumer = consumer;
             this._commitState = commitState;
             this._logger = logger;
@@ -113,24 +110,10 @@ namespace Parallafka
             {
                 try
                 {
-                    if (!this._committedStates.TryGetValue(messageToCommit.Offset.Partition, out CommitPartitionState state))
-                    {
-                        this._committedStates[messageToCommit.Offset.Partition] = state = new();
-                    }
-
-                    // commit per partition from one task at a time
-                    if (state.Offset >= messageToCommit.Offset.Offset)
-                    {
-                        // sanity check, this shouldn't happen
-                        this._logger.Log(LogLevel.Error, "Commit offset out of order");
-                        break;
-                    }
-
                     Parallafka<TKey, TValue>.WriteLine($"MsgCommitter: committing {messageToCommit.Offset}");
 
                     // TODO: inject CancelToken for hard-stop strategy?
                     await this._consumer.CommitAsync(messageToCommit.Offset);
-                    state.Offset = messageToCommit.Offset.Offset;
 
                     break;
                 }
@@ -140,11 +123,6 @@ namespace Parallafka
                     await Task.Delay(99);
                 }
             }
-        }
-
-        private class CommitPartitionState
-        {
-            public long Offset { get; set; } = -1;
         }
     }
 }
