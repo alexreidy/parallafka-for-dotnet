@@ -31,7 +31,8 @@ namespace Parallafka
             this._commitActBlock = new ActionBlock<int>(_ => GetAndCommitAnyMessages(),
                 new ExecutionDataflowBlockOptions
                 {
-                    MaxDegreeOfParallelism = 1
+                    MaxDegreeOfParallelism = 1,
+                    BoundedCapacity = 1
                 });
 
             this._commitBlock.LinkTo(this._commitActBlock, new DataflowLinkOptions { PropagateCompletion = true });
