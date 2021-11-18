@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Threading.Tasks.Dataflow;
@@ -17,8 +16,7 @@ namespace Parallafka
         private readonly CancellationToken _stopToken;
         private readonly CancellationTokenSource _stopTimer;
         private readonly Dictionary<int, CommitPartitionState> _committedStates;
-        private readonly BroadcastBlock<int> _commitBlock;
-        private readonly ActionBlock<int> _commitActBlock;
+        private readonly ActionBlock<int> _commitBlock;
 
         public MessageCommitter(
             IKafkaConsumer<TKey, TValue> consumer,
@@ -27,15 +25,12 @@ namespace Parallafka
             TimeSpan timerDelay,
             CancellationToken stopToken)
         {
-            this._commitBlock = new BroadcastBlock<int>(i => i);
-            this._commitActBlock = new ActionBlock<int>(_ => GetAndCommitAnyMessages(),
+            this._commitBlock = new ActionBlock<int>(_ => GetAndCommitAnyMessages(),
                 new ExecutionDataflowBlockOptions
                 {
                     MaxDegreeOfParallelism = 1,
                     BoundedCapacity = 1
                 });
-
-            this._commitBlock.LinkTo(this._commitActBlock, new DataflowLinkOptions { PropagateCompletion = true });
 
             this._committedStates = new();
             this._consumer = consumer;
@@ -45,7 +40,7 @@ namespace Parallafka
             this._stopTimer = new();
             this.Completion =
                 Task.WhenAll(
-                    this._commitActBlock.Completion,
+                    this._commitBlock.Completion,
                     Task.Run(() => this.CommitOnTimer(timerDelay)));
         }
 
@@ -56,7 +51,7 @@ namespace Parallafka
         public void Complete()
         {
             this._stopTimer.Cancel();
-            this._commitActBlock.Post(1);
+            this._commitBlock.Post(1);
             this._commitBlock.Complete();
 
             Parallafka<TKey, TValue>.WriteLine("MC Complete() called");
@@ -72,7 +67,8 @@ namespace Parallafka
         /// </summary>
         public Task CommitNow()
         {
-            return this._commitBlock.SendAsync(1);
+            this._commitBlock.Post(1);
+            return Task.CompletedTask;
         }
 
         /// <summary>

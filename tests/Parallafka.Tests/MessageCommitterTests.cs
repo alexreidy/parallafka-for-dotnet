@@ -17,7 +17,7 @@ namespace Parallafka.Tests
         [InlineData(false)]
         public async Task CommitsSimpleRecordAsync(bool wasHandled)
         {
-            Parallafka<string, string>.WriteLine = s => this._output.WriteLine(s);
+            // Parallafka<string, string>.WriteLine = s => this._output.WriteLine(s);
             // given
             var consumer = new Mock<IKafkaConsumer<string, string>>();
             var logger = new Mock<ILogger>();
