@@ -1,5 +1,5 @@
-﻿using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
+﻿using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -8,7 +8,7 @@ using Parallafka.KafkaConsumer;
 namespace Parallafka
 {
     /// <summary>
-    /// Keeps track of messages that need to be committed.a
+    /// Keeps track of messages that need to be committed.
     /// </summary>
     /// <typeparam name="TKey"></typeparam>
     /// <typeparam name="TValue"></typeparam>
@@ -20,7 +20,7 @@ namespace Parallafka
         /// It's safe to commit a handled message provided all earlier (lower-offset) messages have also been marked
         /// as handled.
         /// </summary>
-        private readonly Dictionary<int, Queue<IKafkaMessage<TKey, TValue>>> _messagesNotYetCommittedByPartition;
+        private readonly Dictionary<int, ConcurrentQueue<IKafkaMessage<TKey, TValue>>> _messagesNotYetCommittedByPartition;
         private readonly ReaderWriterLockSlim _messagesNotYetCommittedByPartitionReaderWriterLock;
 
         private readonly SemaphoreSlim _canQueueMessage;
@@ -40,7 +40,7 @@ namespace Parallafka
         /// </summary>
         public IEnumerable<IKafkaMessage<TKey, TValue>> GetMessagesToCommit()
         {
-            List<Queue<IKafkaMessage<TKey, TValue>>> allQueues;
+            List<ConcurrentQueue<IKafkaMessage<TKey, TValue>>> allQueues;
 
             this._messagesNotYetCommittedByPartitionReaderWriterLock.EnterReadLock();
             try
@@ -54,7 +54,7 @@ namespace Parallafka
 
             foreach (var queue in allQueues)
             {
-                IKafkaMessage<TKey, TValue> messageToCommit = GetMessageToCommit(null, queue);
+                IKafkaMessage<TKey, TValue> messageToCommit = GetMessageToCommit(queue);
 
                 if (messageToCommit != null)
                 {
@@ -63,65 +63,22 @@ namespace Parallafka
             }
         }
 
-        /// <summary>
-        /// Given a handled message, find a message to commit up to and including the message
-        /// </summary>
-        /// <param name="message">The message that could be committed</param>
-        /// <param name="messageToCommit">The message that should be committed</param>
-        /// <returns>True if a message was found, false otherwise</returns>
-        public bool TryGetMessageToCommit(IKafkaMessage<TKey, TValue> message, [NotNullWhen(true)] out IKafkaMessage<TKey, TValue> messageToCommit)
-        {
-            messageToCommit = null;
-            Queue<IKafkaMessage<TKey, TValue>> messagesInPartition;
-
-            this._messagesNotYetCommittedByPartitionReaderWriterLock.EnterReadLock();
-            try
-            {
-                if (!this._messagesNotYetCommittedByPartition.TryGetValue(message.Offset.Partition, out messagesInPartition))
-                {
-                    Parallafka<TKey, TValue>.WriteLine($"CS:GetMsgToCommit: {message.Key} {message.Offset} [none]");
-                    return false;
-                }
-            }
-            finally
-            {
-                this._messagesNotYetCommittedByPartitionReaderWriterLock.ExitReadLock();
-            }
-
-            messageToCommit = GetMessageToCommit(message,messagesInPartition);
-            return messageToCommit != null;
-        }
-
-        private IKafkaMessage<TKey, TValue> GetMessageToCommit(IKafkaMessage<TKey, TValue> message, Queue<IKafkaMessage<TKey, TValue>> messagesInPartition)
+        private IKafkaMessage<TKey, TValue> GetMessageToCommit(ConcurrentQueue<IKafkaMessage<TKey, TValue>> messagesInPartition)
         {
             IKafkaMessage<TKey, TValue> messageToCommit = null;
-            lock (messagesInPartition)
+            while (messagesInPartition.TryPeek(out IKafkaMessage<TKey, TValue> msg) && msg.WasHandled)
             {
-                while (messagesInPartition.TryPeek(out IKafkaMessage<TKey, TValue> msg) &&
-                       msg.WasHandled &&
-                       (message == null || msg.Offset.Offset <= message.Offset.Offset))
-                {
-                    messageToCommit = msg;
-                    messagesInPartition.Dequeue();
+                messageToCommit = msg;
+                messagesInPartition.TryDequeue(out _);
 
-                    this._canQueueMessage.Release();
+                this._canQueueMessage.Release();
 
-                    Parallafka<TKey, TValue>.WriteLine($"CS:DequeueMessage: {msg.Key} {msg.Offset}");
-                }
-
-                if (message == null)
-                {
-                    Parallafka<TKey, TValue>.WriteLine(
-                        $"CS:GetMsgToCommit: [any] {(messageToCommit == null ? "[notfound]" : messageToCommit.Offset)}");
-                }
-                else
-                {
-                    Parallafka<TKey, TValue>.WriteLine(
-                        $"CS:GetMsgToCommit: {message.Key} {message.Offset} {(messageToCommit == null ? "[notfound]" : messageToCommit.Offset)}");
-                }
-
-                return messageToCommit;
+                Parallafka<TKey, TValue>.WriteLine($"CS:DequeueMessage: {msg.Key} {msg.Offset}");
             }
+
+            Parallafka<TKey, TValue>.WriteLine($"CS:GetMsgToCommit: {(messageToCommit == null ? "[notfound]" : messageToCommit.Offset)}");
+
+            return messageToCommit;
         }
 
         /// <summary>
@@ -130,7 +87,7 @@ namespace Parallafka
         /// <param name="message"></param>
         public async Task EnqueueMessageAsync(IKafkaMessage<TKey, TValue> message)
         {
-            Queue<IKafkaMessage<TKey, TValue>> messagesInPartition;
+            ConcurrentQueue<IKafkaMessage<TKey, TValue>> messagesInPartition;
 
             this._messagesNotYetCommittedByPartitionReaderWriterLock.EnterReadLock();
             try
@@ -162,11 +119,8 @@ namespace Parallafka
             // ReSharper disable once InconsistentlySynchronizedField
             await this._canQueueMessage.WaitAsync(-1, this._stopToken);
 
-            lock (messagesInPartition)
-            {
-                messagesInPartition.Enqueue(message);
-                Parallafka<TKey, TValue>.WriteLine($"CS:EnqueueMessage: {message.Key} {message.Offset}");
-            }
+            messagesInPartition.Enqueue(message);
+            Parallafka<TKey, TValue>.WriteLine($"CS:EnqueueMessage: {message.Key} {message.Offset}");
         }
 
         public string GetStats()

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Threading.Tasks.Dataflow;
 using Microsoft.Extensions.Logging;
 using Parallafka.KafkaConsumer;
 
@@ -15,8 +16,9 @@ namespace Parallafka
         private readonly ILogger _logger;
         private readonly CancellationToken _stopToken;
         private readonly CancellationTokenSource _stopTimer;
-        private readonly Task _commitTimer;
         private readonly Dictionary<int, CommitPartitionState> _committedStates;
+        private readonly BroadcastBlock<int> _commitBlock;
+        private readonly ActionBlock<int> _commitActBlock;
 
         public MessageCommitter(
             IKafkaConsumer<TKey, TValue> consumer,
@@ -25,14 +27,25 @@ namespace Parallafka
             TimeSpan timerDelay,
             CancellationToken stopToken)
         {
+            this._commitBlock = new BroadcastBlock<int>(i => i);
+            this._commitActBlock = new ActionBlock<int>(_ => GetAndCommitAnyMessages(),
+                new ExecutionDataflowBlockOptions
+                {
+                    MaxDegreeOfParallelism = 1
+                });
+
+            this._commitBlock.LinkTo(this._commitActBlock, new DataflowLinkOptions { PropagateCompletion = true });
+
             this._committedStates = new();
             this._consumer = consumer;
-            _commitState = commitState;
+            this._commitState = commitState;
             this._logger = logger;
             this._stopToken = stopToken;
-            this.Completion = new TaskCompletionSource().Task;
             this._stopTimer = new();
-            this._commitTimer = Task.Run(() => this.CommitOnTimer(timerDelay));
+            this.Completion =
+                Task.WhenAll(
+                    this._commitActBlock.Completion,
+                    Task.Run(() => this.CommitOnTimer(timerDelay)));
         }
 
         /// <summary>
@@ -42,43 +55,23 @@ namespace Parallafka
         public void Complete()
         {
             this._stopTimer.Cancel();
-            Completion = Task.WhenAll(this._commitTimer, GetAndCommitAnyMessages());
+            this._commitActBlock.Post(1);
+            this._commitBlock.Complete();
+
+            Parallafka<TKey, TValue>.WriteLine("MC Complete() called");
         }
 
         /// <summary>
         /// A task that when completed indicates the committer is finished processing
         /// </summary>
-        public Task Completion { get; private set; }
+        public Task Completion { get; }
 
         /// <summary>
-        /// Attempts to commit up to the message's offset
+        /// Commits any messages that can be committed
         /// </summary>
-        /// <param name="message">The message to commit</param>
-        /// <returns>True if the message was committed, false if it was queued to be committed later</returns>
-        public async Task<bool> TryCommitMessage(IKafkaMessage<TKey, TValue> message)
+        public Task CommitNow()
         {
-            if (!this._commitState.TryGetMessageToCommit(message, out IKafkaMessage<TKey, TValue> messageToCommit))
-            {
-                Parallafka<TKey, TValue>.WriteLine($"MsgCommitter: {message.Offset} skipping");
-                return false;
-            }
-
-            await CommitMessage(messageToCommit);
-            return messageToCommit == message;
-        }
-
-        /// <summary>
-        /// Gets any possible messages to commit and commits them
-        /// </summary>
-        /// <returns></returns>
-        private async Task GetAndCommitAnyMessages()
-        {
-            var messages = this._commitState.GetMessagesToCommit().ToList();
-
-            foreach (var message in messages)
-            {
-                await CommitMessage(message);
-            }
+            return this._commitBlock.SendAsync(1);
         }
 
         /// <summary>
@@ -88,7 +81,7 @@ namespace Parallafka
         /// <returns></returns>
         private async Task CommitOnTimer(TimeSpan delay)
         {
-            for (; ; )
+            while (!this._stopTimer.IsCancellationRequested)
             {
                 try
                 {
@@ -96,11 +89,27 @@ namespace Parallafka
                 }
                 catch (OperationCanceledException)
                 {
-                    break;
                 }
 
-                await GetAndCommitAnyMessages();
+                await CommitNow();
             }
+        }
+
+        /// <summary>
+        /// Gets any possible messages to commit and commits them
+        /// </summary>
+        /// <returns></returns>
+        private async Task GetAndCommitAnyMessages()
+        {
+            Parallafka<TKey, TValue>.WriteLine("GetAndCommitAnyMessages start");
+            var messages = this._commitState.GetMessagesToCommit().ToList();
+
+            foreach (var message in messages)
+            {
+                await CommitMessage(message);
+            }
+
+            Parallafka<TKey, TValue>.WriteLine("GetAndCommitAnyMessages finish");
         }
 
         private async Task CommitMessage(IKafkaMessage<TKey, TValue> messageToCommit)

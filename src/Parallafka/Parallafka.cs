@@ -66,7 +66,7 @@ namespace Parallafka
                 this._logger, 
                 this._config.CommitDelay ?? TimeSpan.FromSeconds(5), 
                 localStop.Token);
-            var committerTarget = new ActionBlock<IKafkaMessage<TKey, TValue>>(committer.TryCommitMessage,
+            var committerTarget = new ActionBlock<IKafkaMessage<TKey, TValue>>(m => committer.CommitNow(),
                 new ExecutionDataflowBlockOptions
                 {
                     BoundedCapacity = 100,

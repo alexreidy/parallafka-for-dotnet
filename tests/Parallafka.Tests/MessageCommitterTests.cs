@@ -4,16 +4,20 @@ using Microsoft.Extensions.Logging;
 using Moq;
 using Parallafka.KafkaConsumer;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace Parallafka.Tests
 {
     public class MessageCommitterTests
     {
+        private readonly ITestOutputHelper _output;
+
         [Theory]
         [InlineData(true)]
         [InlineData(false)]
         public async Task CommitsSimpleRecordAsync(bool wasHandled)
         {
+            Parallafka<string, string>.WriteLine = s => this._output.WriteLine(s);
             // given
             var consumer = new Mock<IKafkaConsumer<string, string>>();
             var logger = new Mock<ILogger>();
@@ -29,18 +33,13 @@ namespace Parallafka.Tests
             kafkaMessage.WasHandled = wasHandled;
 
             // when
-            var wasCommitted = await mc.TryCommitMessage(kafkaMessage);
+            await mc.CommitNow();
+            mc.Complete();
+            await mc.Completion;
+
+            this._output.WriteLine("Wait mc.Completion finished");
 
             // then
-            if (wasHandled)
-            {
-                Assert.True(wasCommitted);
-            }
-            else
-            {
-                Assert.False(wasCommitted);
-            }
-
             consumer.Verify(c => c.CommitAsync(It.Is<IRecordOffset>(r => r.Offset == 0 && r.Partition == 0)),
                 wasHandled
                     ? Times.Once
@@ -74,10 +73,11 @@ namespace Parallafka.Tests
             kafkaMessage3.WasHandled = false;
 
             // when
-            var wasCommitted = await mc.TryCommitMessage(kafkaMessage3);
+            await mc.CommitNow();
+            mc.Complete();
+            await mc.Completion;
 
             // then
-            Assert.False(wasCommitted);
             consumer.Verify(c => c.CommitAsync(It.Is<IRecordOffset>(r => r.Equals(kafkaMessage2.Offset))), Times.Once);
             consumer.VerifyNoOtherCalls();
 
@@ -108,14 +108,20 @@ namespace Parallafka.Tests
             kafkaMessage3.WasHandled = true;
 
             // when
-            var wasCommitted = await mc.TryCommitMessage(kafkaMessage3);
+            await mc.CommitNow();
+            mc.Complete();
+            await mc.Completion;
 
             // then
-            Assert.True(wasCommitted);
             consumer.Verify(c => c.CommitAsync(It.Is<IRecordOffset>(r => r.Equals(kafkaMessage3.Offset))), Times.Once);
             consumer.VerifyNoOtherCalls();
 
             Assert.Empty(commitState.GetMessagesToCommit());
+        }
+
+        public MessageCommitterTests(ITestOutputHelper output)
+        {
+            this._output = output;
         }
     }
 }

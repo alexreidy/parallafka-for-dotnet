@@ -40,7 +40,7 @@ namespace Parallafka.Tests
             message1.WasHandled = true;
 
             // then
-            Assert.True(cs.TryGetMessageToCommit(message1, out _));
+            cs.GetMessagesToCommit().ToList();
             await enqueueTask;
         }
 
@@ -51,20 +51,20 @@ namespace Parallafka.Tests
             //  given
             var cs = new CommitState<string, string>(int.MaxValue, default);
             var km = new KafkaMessage<string, string>("key", "value", new RecordOffset(0, 0));
-            Assert.False(cs.TryGetMessageToCommit(km, out _));
+            Assert.Empty(cs.GetMessagesToCommit());
 
             // when
             await cs.EnqueueMessageAsync(km);
 
             // then
-            Assert.False(cs.TryGetMessageToCommit(km, out _));
+            Assert.Empty(cs.GetMessagesToCommit());
 
             // when
             km.WasHandled = true;
 
             // then
-            Assert.True(cs.TryGetMessageToCommit(km, out _));
-            Assert.False(cs.TryGetMessageToCommit(km, out _));
+            Assert.NotEmpty(cs.GetMessagesToCommit());
+            Assert.Empty(cs.GetMessagesToCommit());
         }
 
         [Fact]
@@ -84,27 +84,22 @@ namespace Parallafka.Tests
             IKafkaMessage<string, string> messageToCommit;
 
             // then
-            foreach (var km in kms)
-            {
-                Assert.False(cs.TryGetMessageToCommit(km, out messageToCommit));
-            }
+            Assert.Empty(cs.GetMessagesToCommit());
 
             // when
             kms[2].WasHandled = true;
 
             // then
-            foreach (var km in kms)
-            {
-                Assert.False(cs.TryGetMessageToCommit(km, out messageToCommit));
-            }
+            Assert.Empty(cs.GetMessagesToCommit());
 
             // when
             kms[0].WasHandled = true;
             kms[1].WasHandled = true;
 
             // then
-            Assert.True(cs.TryGetMessageToCommit(kms[2], out messageToCommit));
-            Assert.Equal(kms[2], messageToCommit);
+            var messagesToCommit = cs.GetMessagesToCommit().ToList();
+            Assert.Single(messagesToCommit);
+            Assert.Equal(kms[2], messagesToCommit[0]);
         }
 
         [Fact]
