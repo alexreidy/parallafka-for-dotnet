@@ -15,12 +15,14 @@ namespace Parallafka
     internal class MessagesByKey<TKey, TValue>
     {
         private readonly Dictionary<TKey, Queue<IKafkaMessage<TKey, TValue>>> _messagesToHandleForKey;
-        private TaskCompletionSource _completed;
+        private readonly TaskCompletionSource _completedSource;
+        private bool _completed;
 
         public MessagesByKey()
         {
             this._messagesToHandleForKey = new();
-            this.Completion = new TaskCompletionSource().Task;
+            this._completedSource = new();
+            this.Completion = this._completedSource.Task;
         }
 
         /// <summary>
@@ -28,14 +30,12 @@ namespace Parallafka
         /// </summary>
         public void Complete()
         {
-            this._completed = new();
-            this.Completion = this._completed.Task;
-
+            this._completed = true;
             lock (this._messagesToHandleForKey)
             {
-                if (!this.Completion.IsCompleted && this._messagesToHandleForKey.Count == 0)
+                if (this._messagesToHandleForKey.Count == 0)
                 {
-                    this._completed.SetResult();
+                    this._completedSource.TrySetResult();
                 }
             }
         }
@@ -67,9 +67,9 @@ namespace Parallafka
                 {
                     this._messagesToHandleForKey.Remove(message.Key);
 
-                    if (this._completed != null && this._messagesToHandleForKey.Count == 0)
+                    if (this._completed && this._messagesToHandleForKey.Count == 0)
                     {
-                        this._completed.SetResult();
+                        this._completedSource.TrySetResult();
                     }
 
                     nextMessage = null;
