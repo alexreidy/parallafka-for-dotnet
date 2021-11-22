@@ -117,10 +117,7 @@ namespace Parallafka
                 // so we know to queue up any additional messages with the key.
                 // Without this line, FIFO same-key handling order is not enforced.
                 // Remove it to test the tests.
-                lock (this._messagesToHandleForKey)
-                {
-                    this._messagesToHandleForKey[message.Key] = null;
-                }
+                this._messagesToHandleForKey[message.Key] = null;
 
                 Parallafka<TKey, TValue>.WriteLine($"MBK:Processing: {message.Key} {message.Offset}");
 
