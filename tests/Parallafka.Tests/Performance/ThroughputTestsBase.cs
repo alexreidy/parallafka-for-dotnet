@@ -5,7 +5,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Parallafka.KafkaConsumer;
 using Parallafka.Tests.Helpers;
-using Parallafka.Tests.OrderGuarantee;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -79,7 +78,6 @@ namespace Parallafka.Tests.Performance
             int totalHandled = 0;
             bool isWarmup = true;
             Stopwatch sw = new();
-            var rngs = new ThreadSafeRandom();
             CancellationTokenSource stopConsuming = new();
             await consumeAllAsync(async message =>
             {
@@ -94,10 +92,7 @@ namespace Parallafka.Tests.Performance
                 }
                 else
                 {
-                    await rngs.BorrowAsync(async rng =>
-                    {
-                        await Task.Delay(TimeSpan.FromMilliseconds(80 + rng.Next(40)));
-                    });
+                    await Task.Delay(TimeSpan.FromMilliseconds(80 + StaticRandom.Use(r => r.Next(40))));
                     
                     if (Interlocked.Increment(ref totalHandled) == this.RecordCount)
                     {

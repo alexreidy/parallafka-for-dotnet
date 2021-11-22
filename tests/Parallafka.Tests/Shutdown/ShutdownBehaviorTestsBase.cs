@@ -4,7 +4,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Parallafka.KafkaConsumer;
 using Parallafka.Tests.Helpers;
-using Parallafka.Tests.OrderGuarantee;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -36,17 +35,14 @@ namespace Parallafka.Tests.Shutdown
                 var parallafka = new Parallafka<string, string>(consumer, parallafkaConfig);
                 {
                     var consumedMessages = new ConcurrentBag<IKafkaMessage<string, string>>();
-                    var rngs = new ThreadSafeRandom();
                     CancellationTokenSource stopConsuming = new();
                     Task consumeTask = parallafka.ConsumeAsync(async msg =>
                     {
                         // this.Console.WriteLine($"Handler: {msg.Offset}");
 
                         Interlocked.Increment(ref nMessagesBeingHandled);
-                        await rngs.BorrowAsync(async rng =>
-                        {
-                            await Task.Delay(rng.Next(20));
-                        });
+
+                        await Task.Delay(StaticRandom.Use(r => r.Next(20)));
 
                         await maybeHangAsync();
 

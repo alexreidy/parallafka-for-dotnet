@@ -6,7 +6,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Parallafka.KafkaConsumer;
 using Parallafka.Tests.Helpers;
-using Parallafka.Tests.OrderGuarantee;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -36,14 +35,10 @@ namespace Parallafka.Tests.Commits
                 var consumed = new ConcurrentQueue<IKafkaMessage<string, string>>();
                 var firstPartitionMsgsConsumed = new ConcurrentQueue<IKafkaMessage<string, string>>();
                 TaskCompletionSource hangEarlyMsgTcs = new();
-                var rngs = new ThreadSafeRandom();
                 CancellationTokenSource stopConsuming = new CancellationTokenSource();
                 Task consumeTask = parallafka.ConsumeAsync(async msg =>
                 {
-                    await rngs.BorrowAsync(async rng =>
-                    {
-                        await Task.Delay(rng.Next(25));
-                    });
+                    await Task.Delay(StaticRandom.Use(r => r.Next(25)));
 
                     if (msg.Offset.Partition == 0)
                     {
