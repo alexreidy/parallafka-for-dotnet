@@ -61,11 +61,14 @@ namespace Parallafka.Tests
 
         public static async Task ForTaskOrTimeoutAsync(Task task, TimeSpan timeout, Action onTimeout)
         {
-            var timeoutTask = Task.Delay(timeout);
-            await Task.WhenAny(task, timeoutTask);
-            if (timeoutTask.IsCompleted && !task.IsCompleted)
+            await Task.WhenAny(task, Task.Delay(timeout));
+            if (!task.IsCompleted)
             {
-                onTimeout.Invoke();
+                onTimeout?.Invoke();
+            }
+            else
+            {
+                await task;
             }
         }
     }

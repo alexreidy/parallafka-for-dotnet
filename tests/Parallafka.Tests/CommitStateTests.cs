@@ -40,8 +40,12 @@ namespace Parallafka.Tests
             message1.WasHandled = true;
 
             // then
-            cs.GetMessagesToCommit().ToList();
-            await enqueueTask;
+            var list = cs.GetMessagesToCommit().ToList();
+
+            Assert.NotEmpty(list);
+
+            await Wait.ForTaskOrTimeoutAsync(enqueueTask, TimeSpan.FromSeconds(10),
+                () => throw new Exception("Timed out waiting for enqueueTask"));
         }
 
 

@@ -13,7 +13,7 @@ namespace Parallafka.Tests
     public class MessageFinishedRouterTests
     {
         [Fact]
-        public async Task MessagesAreSentToDataflowCorrectly()
+        public async Task SameKeyMessagesAreSentToDataflowCorrectly()
         {
             // given
             var mbk = new MessagesByKey<string, string>();
@@ -22,11 +22,6 @@ namespace Parallafka.Tests
             var messages = Enumerable.Range(1, totalMessages)
                 .Select(i => new KafkaMessage<string, string>("key", "value", new RecordOffset(0, i)))
                 .ToList();
-
-            foreach (var message in messages)
-            {
-                mbk.TryAddMessageToHandle(message);
-            }
 
             var sentMessageCount = 0;
             IRecordOffset lastOffset = null;
@@ -38,6 +33,16 @@ namespace Parallafka.Tests
 
             mfr.MessagesToHandle.LinkTo(flow, new DataflowLinkOptions { PropagateCompletion = true });
 
+            // the first message should be handled
+            Assert.True(mbk.TryAddMessageToHandle(messages[0]));
+            
+            // the remaining messages should be queued
+            foreach (var message in messages.Skip(1))
+            {
+                Assert.False(mbk.TryAddMessageToHandle(message));
+            }
+            
+            // finish all the messages
             foreach (var message in messages)
             {
                 await mfr.MessageHandlerFinished(message);
@@ -50,6 +55,7 @@ namespace Parallafka.Tests
             await flow.Completion;
 
             // then
+            // only the queued messages are sent to the flow when MessageHandlerFinished is called.
             Assert.Equal(totalMessages - 1, sentMessageCount);
             Assert.Equal(messages.Last().Offset, lastOffset);
         }
