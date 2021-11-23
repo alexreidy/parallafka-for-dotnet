@@ -36,5 +36,10 @@ namespace Parallafka.KafkaConsumer
         {
             return HashCode.Combine(this.Partition, this.Offset);
         }
+
+        public override string ToString()
+        {
+            return $"P:{this.Partition} O:{this.Offset}";
+        }
     }
 }

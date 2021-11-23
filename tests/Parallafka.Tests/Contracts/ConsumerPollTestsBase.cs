@@ -5,8 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Parallafka.KafkaConsumer;
 using Xunit;
-
-#pragma warning disable CS4014
+using Xunit.Abstractions;
 
 namespace Parallafka.Tests.Contracts
 {
@@ -14,54 +13,46 @@ namespace Parallafka.Tests.Contracts
     {
         private volatile bool _consumerShouldNotBeHandlingAnyMessages = false;
 
-        [Fact]
         public virtual async Task ConsumerHangsAtPartitionEndsTillNewMessageAsync()
         {
-            await using(IKafkaConsumer<string, string> consumer = await this.Topic.GetConsumerAsync("parallafka"))
-            await using(var parallafka = new Parallafka<string, string>(consumer,
+            await using IKafkaConsumer<string, string> consumer = await this.Topic.GetConsumerAsync("parallafka");
+            var parallafka = new Parallafka<string, string>(consumer,
                 new ParallafkaConfig<string, string>()
                 {
-                    MaxConcurrentHandlers = 7,
-                }))
-            {
-                await this.AssertConsumerHangsAtPartitionEndsTillNewMessageAsync(
-                    consumeTopicAsync: parallafka.ConsumeAsync,
-                    stopConsumerAsync: () => parallafka.DisposeAsync().AsTask());
-            }
+                    MaxDegreeOfParallelism = 7,
+                });
+            await this.AssertConsumerHangsAtPartitionEndsTillNewMessageAsync(
+                consumeTopicAsync: parallafka.ConsumeAsync);
         }
 
-        [Fact]
         public virtual async Task RawConsumerHangsAtPartitionEndsTillNewMessageOrCancellationAsync()
         {
             bool receivedNullMsg = false;
             var cts = new CancellationTokenSource(60_000);
-            await using(IKafkaConsumer<string, string> consumer = await this.Topic.GetConsumerAsync("rawConsumer"))
+            await using IKafkaConsumer<string, string> consumer = await this.Topic.GetConsumerAsync("rawConsumer");
+            await this.AssertConsumerHangsAtPartitionEndsTillNewMessageAsync(consumeTopicAsync: async (handleAsync, ct) =>
             {
-                await this.AssertConsumerHangsAtPartitionEndsTillNewMessageAsync(consumeTopicAsync: async handleAsync =>
+                while (true)
                 {
-                    while (true)
+                    IKafkaMessage<string, string> message = await consumer.PollAsync(cts.Token);
+                    if (message == null)
                     {
-                        IKafkaMessage<string, string> message = await consumer.PollAsync(cts.Token);
-                        if (message == null)
-                        {
-                            receivedNullMsg = true;
-                            break;
-                        }
-                        await handleAsync(message);
+                        receivedNullMsg = true;
+                        break;
                     }
-                }, stopConsumerAsync: async () =>
-                {
-                    Assert.False(receivedNullMsg);
-                    cts.Cancel();
-                });
+                    await handleAsync(message);
+                }
+            }, () =>
+            {
+                Assert.False(receivedNullMsg);
+            });
                 
-                Assert.True(receivedNullMsg);
-            }
+            Assert.True(receivedNullMsg);
         }
 
         private async Task AssertConsumerHangsAtPartitionEndsTillNewMessageAsync(
-            Func<Func<IKafkaMessage<string, string>, Task>, Task> consumeTopicAsync,
-            Func<Task> stopConsumerAsync)
+            Func<Func<IKafkaMessage<string, string>, Task>, CancellationToken, Task> consumeTopicAsync,
+            Action consumerFinished = null)
         {
             int nFirstBatchMessagesPublished = 50;
             int nSecondBatchMessagesPublished = 30;
@@ -93,6 +84,7 @@ namespace Parallafka.Tests.Contracts
                 }
             }
 
+            CancellationTokenSource stopConsuming = new();
             Task consumerTask = consumeTopicAsync(async msg =>
             {
                 await WithConsumerLockAsync(async () =>
@@ -117,7 +109,7 @@ namespace Parallafka.Tests.Contracts
                         this._consumerShouldNotBeHandlingAnyMessages = true;
                     }
                 });
-            });
+            }, stopConsuming.Token);
 
             Task WaitForAllMessagesAndAssertNothingElseIsHandledAfterDelayAsync(int expectedHandledMsgCount)
             {
@@ -148,7 +140,9 @@ namespace Parallafka.Tests.Contracts
             await WaitForAllMessagesAndAssertNothingElseIsHandledAfterDelayAsync(
                 expectedHandledMsgCount: nFirstBatchMessagesPublished + nSecondBatchMessagesPublished);
 
-            await stopConsumerAsync();
+            consumerFinished?.Invoke();
+            
+            stopConsuming.Cancel();
             await consumerTask;
         }
 
@@ -173,6 +167,10 @@ namespace Parallafka.Tests.Contracts
 
                 await Task.Delay(retryDelay);
             }
+        }
+
+        protected ConsumerPollTestsBase(ITestOutputHelper console) : base(console)
+        {
         }
     }
 }

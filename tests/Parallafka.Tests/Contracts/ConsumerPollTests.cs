@@ -1,18 +1,13 @@
-using System;
-using System.Threading.Tasks;
-using Parallafka.IntegrationTests;
-using Parallafka.Tests;
-using Parallafka.Tests.Contracts;
+﻿using System.Threading.Tasks;
+using Parallafka.Tests.Helpers;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace ConfluentKafkaAdapter.Tests
+namespace Parallafka.Tests.Contracts
 {
     public class ConsumerPollTests : ConsumerPollTestsBase
     {
-        private readonly RealKafkaTopicProvider _topic = new($"ParallafkaConsumerPollTests-{Guid.NewGuid()}");
-        
-        protected override ITestKafkaTopic Topic => this._topic;
+        protected override ITestKafkaTopic Topic { get; }
 
         [Fact]
         public override Task ConsumerHangsAtPartitionEndsTillNewMessageAsync()
@@ -28,6 +23,7 @@ namespace ConfluentKafkaAdapter.Tests
 
         public ConsumerPollTests(ITestOutputHelper console) : base(console)
         {
+            this.Topic = new FakeTestKafkaTopic();
         }
     }
 }

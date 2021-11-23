@@ -1,16 +1,23 @@
 using System;
-using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 
 namespace Parallafka
 {
     public interface IParallafkaConfig<TKey, TValue>
     {
-        int MaxConcurrentHandlers { get; }
-
-        Func<Parallafka<TKey, TValue>, IDisposeStrategy> DisposeStrategyProvider { get; }
+        int MaxDegreeOfParallelism { get; }
 
         ILogger Logger { get; }
+
+        /// <summary>
+        /// The maximum delay for committing messages to Kafka
+        /// </summary>
+        TimeSpan? CommitDelay { get; }
+
+        /// <summary>
+        /// Gets the maximum queued messages.  Defaults to 1000
+        /// </summary>
+        int? MaxQueuedMessages { get; }
 
         // TODO: adaptive mode flag: optimize throughput by tuning thread count
 

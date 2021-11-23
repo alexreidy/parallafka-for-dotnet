@@ -1,21 +1,17 @@
-
 using System;
 using System.Threading.Tasks;
 using Parallafka.Tests;
 using Parallafka.Tests.Shutdown;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace Parallafka.IntegrationTests.Shutdown
 {
     public class ShutdownBehaviorTests : ShutdownBehaviorTestsBase
     {
-        private TestKafkaTopicProvider _topic;
-        protected override ITestKafkaTopic Topic => this._topic;
+        private readonly RealKafkaTopicProvider _topic = new($"ParallafkaShutdownBehaviorTest-{Guid.NewGuid()}");
 
-        public ShutdownBehaviorTests()
-        {
-            this._topic = new TestKafkaTopicProvider($"ParallafkaShutdownBehaviorTest-{Guid.NewGuid().ToString()}");
-        }
+        protected override ITestKafkaTopic Topic => this._topic;
 
         [Fact]
         public override Task TestGracefulShutdownAsync()
@@ -23,16 +19,8 @@ namespace Parallafka.IntegrationTests.Shutdown
             return base.TestGracefulShutdownAsync();
         }
 
-        [Fact]
-        public override Task TestGracefulShutdownTimeoutAsync()
+        public ShutdownBehaviorTests(ITestOutputHelper console) : base(console)
         {
-            return base.TestGracefulShutdownTimeoutAsync();
-        }
-
-        [Fact]
-        public override Task TestHardStopShutdownAsync()
-        {
-            return base.TestHardStopShutdownAsync();
         }
     }
 }

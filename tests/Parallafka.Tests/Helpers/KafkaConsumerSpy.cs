@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Parallafka.KafkaConsumer;
@@ -10,20 +9,17 @@ namespace Parallafka.Tests
     {
         public ConcurrentQueue<IRecordOffset> CommittedOffsets { get; } = new();
 
-        private IKafkaConsumer<TKey, TValue> _backingConsumer;
+        private readonly IKafkaConsumer<TKey, TValue> _backingConsumer;
 
         public KafkaConsumerSpy(IKafkaConsumer<TKey, TValue> backingConsumer)
         {
             this._backingConsumer = backingConsumer;
         }
 
-        public Task CommitAsync(IEnumerable<IRecordOffset> offsets)
+        public Task CommitAsync(IRecordOffset offset)
         {
-            foreach (var offset in offsets)
-            {
-                this.CommittedOffsets.Enqueue(offset);
-            }
-            return this._backingConsumer.CommitAsync(offsets);
+            this.CommittedOffsets.Enqueue(offset);
+            return this._backingConsumer.CommitAsync(offset);
         }
 
         public ValueTask DisposeAsync()

@@ -1,6 +1,4 @@
 using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Confluent.Kafka;
@@ -20,14 +18,16 @@ namespace Parallafka.Adapters.ConfluentKafka
             this._topic = topic;
         }
 
-        public Task CommitAsync(IEnumerable<IRecordOffset> offsets)
+        public Task CommitAsync(IRecordOffset offset)
         {
             // TODO: Does this not accept a CancellationToken? Roll our own?
-            this._confluentConsumer.Commit(
-                offsets.Select(o => new TopicPartitionOffset(
+            this._confluentConsumer.Commit(new[]
+            {
+                new TopicPartitionOffset(
                     this._topic,
-                    o.Partition,
-                    o.Offset)));
+                    offset.Partition,
+                    offset.Offset)
+            });
             
             return Task.CompletedTask;
         }
@@ -58,11 +58,14 @@ namespace Parallafka.Adapters.ConfluentKafka
                 }
                 while (!cancellationToken.IsCancellationRequested);
             }
-            catch (OperationCanceledException e)
+            catch (OperationCanceledException)
             {
                 return null;
             }
-            IKafkaMessage<TKey, TValue> msg = new KafkaMessage<TKey, TValue>(result.Message.Key, result.Message.Value,
+
+            IKafkaMessage<TKey, TValue> msg = new KafkaMessage<TKey, TValue>(
+                result.Message.Key,
+                result.Message.Value,
                 new RecordOffset(result.Partition, result.Offset));
             return msg;
         }

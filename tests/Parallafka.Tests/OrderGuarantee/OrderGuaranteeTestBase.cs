@@ -3,22 +3,22 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Parallafka.KafkaConsumer;
+using Parallafka.Tests.Helpers;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace Parallafka.Tests.OrderGuarantee
 {
     public abstract class OrderGuaranteeTestBase : KafkaTopicTestBase
     {
-        [Fact]
         public virtual async Task TestFifoOrderIsPreservedForSameKeyAsync()
         {
-            KafkaConsumerSpy<string, string> consumer = await this.Topic.GetConsumerAsync(
-                $"SameKeyOrderTest-{Guid.NewGuid().ToString()}");
+            KafkaConsumerSpy<string, string> consumer = await this.Topic.GetConsumerAsync($"SameKeyOrderTest-{Guid.NewGuid()}");
 
             IParallafka<string, string> parallafka = new Parallafka<string, string>(consumer,
-                new ParallafkaConfig<string, string>()
+                new ParallafkaConfig<string, string>
                 {
-                    MaxConcurrentHandlers = 7
+                    MaxDegreeOfParallelism = 7
                 });
 
             var keys = new List<string>();
@@ -61,6 +61,7 @@ namespace Parallafka.Tests.OrderGuarantee
             consumptionVerifier.AddSentMessages(messagesToSend);
 
             int totalReceived = 0;
+            CancellationTokenSource stopConsuming = new CancellationTokenSource();
             await parallafka.ConsumeAsync(async msg =>
             {
                 var rng = new Random();
@@ -70,17 +71,19 @@ namespace Parallafka.Tests.OrderGuarantee
 
                 if (Interlocked.Increment(ref totalReceived) == totalMessagesSent)
                 {
-                    // TODO: What's a good alternative to waiting on dispose from handler?
-                    // (if dispose waits on handlers to finish)
-                    Task.Run(parallafka.DisposeAsync); // TODO: dispose on exceptions
+                    stopConsuming.Cancel();
                 }
-            });
+            }, stopConsuming.Token);
 
             await publishTask;
             Assert.Equal(totalMessagesSent, totalReceived);
 
             consumptionVerifier.AssertConsumedAllSentMessagesProperly();
             consumptionVerifier.AssertAllConsumedMessagesWereCommitted(consumer); // how can we make something that knows when a message has been committed before handler finished?
+        }
+
+        protected OrderGuaranteeTestBase(ITestOutputHelper console) : base(console)
+        {
         }
     }
 }

@@ -20,7 +20,7 @@ namespace BasicConsumer
 
             IParallafkaConfig<string, StockPrice> config = new ParallafkaConfig<string, StockPrice>()
             {
-                MaxConcurrentHandlers = 7,
+                MaxConcurrentHandlers = 7
             };
             IParallafka<string, StockPrice> parallafka = new Parallafka<string, StockPrice>(consumer, config);
 

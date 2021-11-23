@@ -9,19 +9,18 @@ namespace Parallafka.IntegrationTests.Commits
 {
     public class CommitTests : CommitTestsBase
     {
-        private readonly ITestKafkaTopic _topic;
+        private readonly RealKafkaTopicProvider _topic = new($"ParallafkaCommitTest-{Guid.NewGuid()}");
 
         protected override ITestKafkaTopic Topic => this._topic;
 
-        public CommitTests(ITestOutputHelper output)
+        [Fact]
+        public override Task MessagesAreNotCommittedTillAllEarlierOnesAreHandledAsync()
         {
-            this._topic = new TestKafkaTopicProvider($"ParallafkaCommitTest-{Guid.NewGuid().ToString()}");
+            return base.MessagesAreNotCommittedTillAllEarlierOnesAreHandledAsync();
         }
 
-        [Fact]
-        public override Task MessagesAreNotComittedTillAllEarlierOnesAreHandledAsync()
+        public CommitTests(ITestOutputHelper console) : base(console)
         {
-            return base.MessagesAreNotComittedTillAllEarlierOnesAreHandledAsync();
         }
     }
 }

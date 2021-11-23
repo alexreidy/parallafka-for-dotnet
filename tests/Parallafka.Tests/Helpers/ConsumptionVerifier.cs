@@ -1,23 +1,23 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using Parallafka.KafkaConsumer;
 using Xunit;
 
-namespace Parallafka.Tests.OrderGuarantee
+namespace Parallafka.Tests.Helpers
 {
     public class ConsumptionVerifier
     {
-        private List<IKafkaMessage<string, string>> _sentMessages = new();
+        private readonly List<IKafkaMessage<string, string>> _sentMessages = new();
 
-        private HashSet<string> _sentMessageUniqueIds = new();
+        private readonly HashSet<string> _sentMessageUniqueIds = new();
 
-        private ConcurrentDictionary<string, ConcurrentQueue<IKafkaMessage<string, string>>> _consumedMessagesByKey = new();
+        private readonly Dictionary<string, Queue<IKafkaMessage<string, string>>> _consumedMessagesByKey = new();
 
         private int _consumedMessageCount = 0;
 
-        private string UniqueIdFor(IKafkaMessage<string, string> message)
+        private static string UniqueIdFor(IKafkaMessage<string, string> message)
         {
             // TODO: Override equals
             return $"{message.Key}-[ :) ]-{message.Value}";
@@ -29,11 +29,12 @@ namespace Parallafka.Tests.OrderGuarantee
             {
                 foreach (var message in messages)
                 {
-                    string id = this.UniqueIdFor(message);
+                    string id = UniqueIdFor(message);
                     if (!this._sentMessageUniqueIds.Add(id))
                     {
                         throw new Exception($"Sent message already added: {id}");
                     }
+
                     this._sentMessages.Add(message);
                 }
             }
@@ -47,18 +48,17 @@ namespace Parallafka.Tests.OrderGuarantee
             foreach (var msg in messages)
             {
                 Interlocked.Increment(ref this._consumedMessageCount);
-                this._consumedMessagesByKey.AddOrUpdate(msg.Key,
-                    addValueFactory: k =>
+
+                lock (this._consumedMessagesByKey)
+                {
+                    if (!this._consumedMessagesByKey.TryGetValue(msg.Key, out var queueForKey))
                     {
-                        var queueForKey = new ConcurrentQueue<IKafkaMessage<string, string>>();
-                        queueForKey.Enqueue(msg);
-                        return queueForKey;
-                    },
-                    updateValueFactory: (k, queueForKey) =>
-                    {
-                        queueForKey.Enqueue(msg);
-                        return queueForKey;
-                    });
+                        queueForKey = new();
+                        this._consumedMessagesByKey[msg.Key] = queueForKey;
+                    }
+
+                    queueForKey.Enqueue(msg);
+                }
             }
         }
 
@@ -83,21 +83,27 @@ namespace Parallafka.Tests.OrderGuarantee
 
                     prevMsgOffset = offset;
 
-                    Assert.True(this._sentMessageUniqueIds.Contains(UniqueIdFor(message)));
+                    Assert.True(this._sentMessageUniqueIds.Contains(UniqueIdFor(message)), "Expecting to find message in list of send messages");
                 }
             }
         }
 
         public void AssertAllConsumedMessagesWereCommitted(KafkaConsumerSpy<string, string> consumer)
         {
-            foreach (var messagesForKey in this._consumedMessagesByKey.Values)
+            var byPartition = this._consumedMessagesByKey.Values
+                .SelectMany(q => q)
+                .GroupBy(m => m.Offset.Partition);
+
+            foreach (var partition in byPartition)
             {
-                foreach (var message in messagesForKey)
+                var maxOffset = partition.Max(g => g.Offset.Offset);
+
+                if (!consumer.CommittedOffsets.Any(offset =>
+                    offset.Partition == partition.Key && offset.Offset >= maxOffset))
                 {
-                    Assert.Contains(message.Offset, consumer.CommittedOffsets);
+                    Assert.False(true, $"Expecting to find committed offset for P:{partition.Key} O:{maxOffset}");
                 }
             }
         }
-
     }
 }

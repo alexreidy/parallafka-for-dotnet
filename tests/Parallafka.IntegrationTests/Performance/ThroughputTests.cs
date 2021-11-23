@@ -9,19 +9,18 @@ namespace Parallafka.IntegrationTests.Performance
 {
     public class ThroughputTests : ThroughputTestsBase
     {
-        private readonly ITestKafkaTopic _topic;
+        private readonly RealKafkaTopicProvider _topic = new($"ParallafkaThroughputTest-{Guid.NewGuid()}");
 
         protected override ITestKafkaTopic Topic => this._topic;
-
-        public ThroughputTests(ITestOutputHelper output) : base(output)
-        {
-            this._topic = new TestKafkaTopicProvider($"ParallafkaThroughputTest-{Guid.NewGuid().ToString()}");
-        }
 
         [Fact]
         public override Task TestCanConsumeMuchFasterThanDefaultConsumerAsync()
         {
             return base.TestCanConsumeMuchFasterThanDefaultConsumerAsync();
+        }
+
+        public ThroughputTests(ITestOutputHelper output) : base(output)
+        {
         }
     }
 }

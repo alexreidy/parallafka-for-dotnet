@@ -31,12 +31,11 @@ namespace Parallafka.Tests
 
             string context = contextProvider?.Invoke() ?? string.Empty;
 
-            throw new Exception("Timed out waiting for: " + desiredStateDescription + " ... " + context);
+            throw new Exception($"Timed out waiting for: {desiredStateDescription} ... {context}");
         }
 
         public static Task UntilAsync(string desiredStateDescription, Func<Task> assertionAsync, TimeSpan timeout, TimeSpan? retryDelay = null)
         {
-            Exception ex = null;
             return UntilAsync(desiredStateDescription,
                 async () =>
                 {
@@ -45,9 +44,8 @@ namespace Parallafka.Tests
                         await assertionAsync.Invoke();
                         return true;
                     }
-                    catch (Exception e)
+                    catch
                     {
-                        ex = e;
                         return false;
                     }
                 },
@@ -55,21 +53,22 @@ namespace Parallafka.Tests
                 retryDelay,
                 onTimeoutAsync: async () =>
                 {
-                    if (ex != null)
-                    {
-                        throw ex;
-                    }
-                    throw new Exception("Timed out waiting for: " + desiredStateDescription);
+                    await assertionAsync.Invoke();
+
+                    throw new Exception($"Timed out waiting for: {desiredStateDescription}");
                 });
         }
 
         public static async Task ForTaskOrTimeoutAsync(Task task, TimeSpan timeout, Action onTimeout)
         {
-            var timeoutTask = Task.Delay(timeout);
-            await Task.WhenAny(task, timeoutTask);
-            if (timeoutTask.IsCompleted && !task.IsCompleted)
+            await Task.WhenAny(task, Task.Delay(timeout));
+            if (!task.IsCompleted)
             {
-                onTimeout.Invoke();
+                onTimeout?.Invoke();
+            }
+            else
+            {
+                await task;
             }
         }
     }
