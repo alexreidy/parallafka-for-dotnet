@@ -15,7 +15,7 @@
     <PackageTags>Kafka;parallel;fast;consumer</PackageTags>
     <PackageId>Parallafka.AdapterForConfluentConsumer</PackageId>
     <Title>Parallafka adapter for the Confluent Kafka consumer</Title>
-    <Version>0.9.0</Version>
+    <Version>0.9.1</Version>
     <Description>Adapts Confluent's Kafka consumer client for use with Parallafka</Description>
     <RootNamespace>Parallafka.Adapters.ConfluentKafka</RootNamespace>
   </PropertyGroup>
