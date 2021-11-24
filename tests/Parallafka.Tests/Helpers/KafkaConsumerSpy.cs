@@ -16,10 +16,10 @@ namespace Parallafka.Tests
             this._backingConsumer = backingConsumer;
         }
 
-        public Task CommitAsync(IRecordOffset offset)
+        public Task CommitAsync(IKafkaMessage<TKey, TValue> message)
         {
-            this.CommittedOffsets.Enqueue(offset);
-            return this._backingConsumer.CommitAsync(offset);
+            this.CommittedOffsets.Enqueue(message.Offset);
+            return this._backingConsumer.CommitAsync(message);
         }
 
         public ValueTask DisposeAsync()

@@ -40,7 +40,7 @@ namespace Parallafka.Tests
             this._output.WriteLine("Wait mc.Completion finished");
 
             // then
-            consumer.Verify(c => c.CommitAsync(It.Is<IRecordOffset>(r => r.Offset == 0 && r.Partition == 0)),
+            consumer.Verify(c => c.CommitAsync(It.Is<IKafkaMessage<string, string>>(r => r.Offset.Offset == 0 && r.Offset.Partition == 0)),
                 wasHandled
                     ? Times.Once
                     : Times.Never);
@@ -78,7 +78,7 @@ namespace Parallafka.Tests
             await mc.Completion;
 
             // then
-            consumer.Verify(c => c.CommitAsync(It.Is<IRecordOffset>(r => r.Equals(kafkaMessage2.Offset))), Times.Once);
+            consumer.Verify(c => c.CommitAsync(It.Is<IKafkaMessage<string, string>>(r => r.Offset.Equals(kafkaMessage2.Offset))), Times.Once);
             consumer.VerifyNoOtherCalls();
 
             Assert.Empty(commitState.GetMessagesToCommit());
@@ -113,7 +113,7 @@ namespace Parallafka.Tests
             await mc.Completion;
 
             // then
-            consumer.Verify(c => c.CommitAsync(It.Is<IRecordOffset>(r => r.Equals(kafkaMessage3.Offset))), Times.Once);
+            consumer.Verify(c => c.CommitAsync(It.Is<IKafkaMessage<string, string>>(r => r.Offset.Equals(kafkaMessage3.Offset))), Times.Once);
             consumer.VerifyNoOtherCalls();
 
             Assert.Empty(commitState.GetMessagesToCommit());

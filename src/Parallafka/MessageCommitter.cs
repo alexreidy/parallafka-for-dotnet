@@ -113,7 +113,7 @@ namespace Parallafka
                     Parallafka<TKey, TValue>.WriteLine($"MsgCommitter: committing {messageToCommit.Offset}");
 
                     // TODO: inject CancelToken for hard-stop strategy?
-                    await this._consumer.CommitAsync(messageToCommit.Offset);
+                    await this._consumer.CommitAsync(messageToCommit);
 
                     break;
                 }

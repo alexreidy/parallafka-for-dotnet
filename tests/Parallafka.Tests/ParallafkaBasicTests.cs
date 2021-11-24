@@ -188,11 +188,11 @@ namespace Parallafka.Tests
                 return _enumerator.Current;
             }
 
-            public Task CommitAsync(IRecordOffset offset)
+            public Task CommitAsync(IKafkaMessage<TKey, TValue> message)
             {
                 lock (this.Commits)
                 {
-                    this.Commits.Add(offset);
+                    this.Commits.Add(message.Offset);
                 }
 
                 return Task.CompletedTask;

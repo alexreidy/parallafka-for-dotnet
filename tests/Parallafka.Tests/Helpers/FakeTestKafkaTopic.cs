@@ -78,7 +78,7 @@ namespace Parallafka.Tests.Helpers
                 }
             }
 
-            public Task CommitAsync(IRecordOffset offset)
+            public Task CommitAsync(IKafkaMessage<string, string> message)
             {
                 return Task.CompletedTask;
             }
