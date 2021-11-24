@@ -18,15 +18,15 @@ namespace Parallafka.Adapters.ConfluentKafka
             this._topic = topic;
         }
 
-        public Task CommitAsync(IRecordOffset offset)
+        public Task CommitAsync(IKafkaMessage<TKey, TValue> message)
         {
             // TODO: Does this not accept a CancellationToken? Roll our own?
             this._confluentConsumer.Commit(new[]
             {
                 new TopicPartitionOffset(
                     this._topic,
-                    offset.Partition,
-                    offset.Offset)
+                    message.Offset.Partition,
+                    message.Offset.Offset)
             });
             
             return Task.CompletedTask;
