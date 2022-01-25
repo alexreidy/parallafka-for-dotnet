@@ -155,6 +155,9 @@ namespace Parallafka
                             }
                         }
                     }
+                    catch (OperationCanceledException)
+                    {
+                    }
                     catch (Exception e)
                     {
                         this._logger.LogError(e, "Error in Kafka poller thread");
