@@ -160,7 +160,7 @@ namespace Parallafka
                     catch (Exception e)
                     {
                         this._logger.LogError(e, "Error in Kafka poller thread");
-                        delay = 333
+                        delay = 333;
                     }
                 }
             }
