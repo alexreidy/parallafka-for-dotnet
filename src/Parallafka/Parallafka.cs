@@ -32,7 +32,7 @@ namespace Parallafka
         {
             var maxQueuedMessages = this._config.MaxQueuedMessages ?? 1000;
             // Are there any deadlocks or performance issues with these caps in general?
-            var localStop = new CancellationTokenSource();
+            using var localStop = new CancellationTokenSource();
             var commitState = new CommitState<TKey, TValue>(maxQueuedMessages, localStop.Token);
             var messagesByKey = new MessagesByKey<TKey, TValue>();
 
