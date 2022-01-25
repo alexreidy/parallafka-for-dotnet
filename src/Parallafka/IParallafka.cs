@@ -8,6 +8,12 @@ namespace Parallafka
     public interface IParallafka<TKey, TValue>
     {
         /// <summary>
+        /// Returns an anonymous type instance of statistics for the parallafka running instance
+        /// </summary>
+        /// <returns></returns>
+        object GetStats();
+
+        /// <summary>
         /// Continues consuming messages until the stopToken is cancelled
         /// </summary>
         /// <param name="messageHandlerAsync">The delegate that receives the message</param>

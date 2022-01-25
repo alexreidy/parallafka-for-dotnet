@@ -66,6 +66,7 @@ namespace Parallafka
         private IKafkaMessage<TKey, TValue> GetMessageToCommit(ConcurrentQueue<IKafkaMessage<TKey, TValue>> messagesInPartition)
         {
             IKafkaMessage<TKey, TValue> messageToCommit = null;
+
             while (messagesInPartition.TryPeek(out IKafkaMessage<TKey, TValue> msg) && msg.WasHandled)
             {
                 messageToCommit = msg;
@@ -123,12 +124,17 @@ namespace Parallafka
             Parallafka<TKey, TValue>.WriteLine($"CS:EnqueueMessage: {message.Key} {message.Offset}");
         }
 
-        public string GetStats()
+        public object GetStats()
         {
             this._messagesNotYetCommittedByPartitionReaderWriterLock.EnterReadLock();
             try
             {
-                return $"{string.Join(", ", this._messagesNotYetCommittedByPartition.Select(kvp => $"P:{kvp.Key} Cnt:{kvp.Value.Count}"))}";
+                return this._messagesNotYetCommittedByPartition
+                    .Select(kvp => new
+                    {
+                        Partition = kvp.Key,
+                        CommitsPending = kvp.Value.Count
+                    });
             }
             finally
             {

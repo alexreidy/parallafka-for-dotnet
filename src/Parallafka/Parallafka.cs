@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Threading.Tasks.Dataflow;
@@ -12,6 +13,7 @@ namespace Parallafka
         private readonly IKafkaConsumer<TKey, TValue> _consumer;
         private readonly IParallafkaConfig<TKey, TValue> _config;
         private readonly ILogger _logger;
+        private Func<object> _getStats;
 
         public static Action<string> WriteLine { get; set; } = (string s) => { };
 
@@ -26,10 +28,23 @@ namespace Parallafka
             // TODO: Configurable caps, good defaults.
         }
 
+        public object GetStats()
+        {
+            var gs = _getStats;
+            if (gs == null)
+            {
+                return new { };
+            }
+
+            return gs();
+        }
+
+        /// <inheritdoc />
         public async Task ConsumeAsync(
             Func<IKafkaMessage<TKey, TValue>, Task> messageHandlerAsync,
             CancellationToken stopToken)
         {
+            var runtime = Stopwatch.StartNew();
             var maxQueuedMessages = this._config.MaxQueuedMessages ?? 1000;
             // Are there any deadlocks or performance issues with these caps in general?
             var localStop = new CancellationTokenSource();
@@ -89,37 +104,86 @@ namespace Parallafka
                 });
             handler.MessageHandled.LinkTo(messageHandledTarget);
 
+            var state = "Polling for Kafka messages";
+            this._getStats = () =>
+                new
+                {
+                    ConsumerState = state,
+                    MaxQueuedMessages = maxQueuedMessages,
+                    CallDuration = runtime.Elapsed.ToString("g"),
+                    CallDurationMs = runtime.ElapsedMilliseconds,
+                    CommitState = commitState.GetStats(),
+                    MessagesByKey = messagesByKey.GetStats(),
+                    Router = router.GetStats(),
+                    RoutingTarget = new
+                    {
+                        routingTarget.InputCount,
+                        TaskStatus = routingTarget.Completion.Status.ToString()
+                    },
+                    FinishedRouter = finishedRouter.GetStats(),
+                    Handler = handler.GetStats(),
+                    HandlerTarget = new
+                    {
+                        handlerTarget.InputCount,
+                        TaskStatus = handlerTarget.Completion.Status.ToString()
+                    },
+                    Committer = committer.GetStats(),
+                    CommitterTarget = new
+                    {
+                        committerTarget.InputCount,
+                        TaskStatus = committerTarget.Completion.Status.ToString()
+                    },
+                    MessageHandledTarget = new
+                    {
+                        messageHandledTarget.InputCount,
+                        TaskStatus = messageHandledTarget.Completion.Status.ToString()
+                    }
+                };
+
             // poll kafka for messages and send them to the routingTarget
             await this.KafkaPollerThread(routingTarget, stopToken);
 
             // done polling, wait for the routingTarget to finish
+            state = "Shutdown: Awaiting message routing";
             routingTarget.Complete();
             await routingTarget.Completion;
 
             // wait for the router to finish (it should already be done)
+            state = "Shutdown: Awaiting message handler";
             router.MessagesToHandle.Complete();
             await router.MessagesToHandle.Completion;
 
             // wait for the finishedRoute to complete handling all the queued messages
             finishedRouter.Complete();
+            state = "Shutdown: Awaiting message routing completion";
             await finishedRouter.Completion;
 
             // wait for the message handler to complete (should already be done)
+            state = "Shutdown: Awaiting handler shutdown";
             handlerTarget.Complete();
             await handlerTarget.Completion;
+
+            state = "Shutdown: Awaiting handled shutdown";
             handler.MessageHandled.Complete();
             await handler.MessageHandled.Completion;
+
+            state = "Shutdown: Awaiting handled target shutdown";
             messageHandledTarget.Complete();
             await messageHandledTarget.Completion;
 
             // wait for the committer to finish
+            state = "Shutdown: Awaiting message committer target";
             committerTarget.Complete();
             await committerTarget.Completion;
+
+            state = "Shutdown: Awaiting message committer";
             committer.Complete();
             await committer.Completion;
 
+            this._getStats = null;
+
             // commitState should be empty
-            WriteLine($"ConsumeFinished: {commitState.GetStats()}");
+            WriteLine("ConsumeFinished");
         }
         
         private async Task KafkaPollerThread(ITargetBlock<IKafkaMessage<TKey, TValue>> routingTarget, CancellationToken stopToken)
@@ -136,8 +200,7 @@ namespace Parallafka
                         {
                             if (!stopToken.IsCancellationRequested)
                             {
-                                this._logger.LogWarning(
-                                    "Polled a null message while not shutting down: breach of IKafkaConsumer contract");
+                                this._logger.LogWarning("Polled a null message while not shutting down: breach of IKafkaConsumer contract");
                                 await Task.Delay(50);
                             }
                         }
@@ -167,7 +230,5 @@ namespace Parallafka
                 this._logger.LogCritical(e, "Fatal error in Kafka poller thread");
             }
         }
-
-
     }
 }
