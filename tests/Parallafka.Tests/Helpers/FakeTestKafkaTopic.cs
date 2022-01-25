@@ -66,16 +66,9 @@ namespace Parallafka.Tests.Helpers
                 return ValueTask.CompletedTask;
             }
 
-            public async Task<IKafkaMessage<string, string>> PollAsync(CancellationToken cancellationToken)
+            public Task<IKafkaMessage<string, string>> PollAsync(CancellationToken cancellationToken)
             {
-                try
-                {
-                    return await this._messages.ReceiveAsync(cancellationToken);
-                }
-                catch (OperationCanceledException)
-                {
-                    return null;
-                }
+                return this._messages.ReceiveAsync(cancellationToken);
             }
 
             public Task CommitAsync(IKafkaMessage<string, string> message)

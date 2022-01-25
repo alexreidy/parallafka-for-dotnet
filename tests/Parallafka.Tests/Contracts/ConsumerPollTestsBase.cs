@@ -34,13 +34,17 @@ namespace Parallafka.Tests.Contracts
             {
                 while (true)
                 {
-                    IKafkaMessage<string, string> message = await consumer.PollAsync(cts.Token);
-                    if (message == null)
+                    try
+                    {
+                        IKafkaMessage<string, string> message = await consumer.PollAsync(cts.Token);
+
+                        await handleAsync(message);
+                    }
+                    catch (OperationCanceledException)
                     {
                         receivedNullMsg = true;
                         break;
                     }
-                    await handleAsync(message);
                 }
             }, () =>
             {

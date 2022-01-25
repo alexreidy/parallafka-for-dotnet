@@ -167,21 +167,11 @@ namespace Parallafka.Tests
 
             public async Task<IKafkaMessage<TKey, TValue>> PollAsync(CancellationToken cancellationToken)
             {
-                if (cancellationToken.IsCancellationRequested)
-                {
-                    return null;
-                }
+                cancellationToken.ThrowIfCancellationRequested();
 
                 if (!_enumerator.MoveNext())
                 {
-                    try
-                    {
-                        await Task.Delay(-1, cancellationToken);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        return null;
-                    }
+                    await Task.Delay(-1, cancellationToken);
                 }
 
                 Interlocked.Increment(ref this._messagesQueued);
