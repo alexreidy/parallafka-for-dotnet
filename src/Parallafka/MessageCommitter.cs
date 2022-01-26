@@ -31,7 +31,6 @@ namespace Parallafka
         {
             return new
             {
-                this._commitBlock.InputCount,
                 MessageCommitLoopInProgress = _messageCommitLoopInProgress,
                 MessagesCommitted = this._messagesCommitted,
                 MessagesCommitErrors = this._messagesCommitErrors,
