@@ -12,7 +12,10 @@ namespace Parallafka
         public MessageFinishedRouter(MessagesByKey<TKey, TValue> messageByKey)
         {
             this._messageByKey = messageByKey;
-            this._messagesToHandle = new(new DataflowBlockOptions { BoundedCapacity = 1 });
+            this._messagesToHandle = new(new DataflowBlockOptions
+            {
+                BoundedCapacity = 1
+            });
         }
 
         public ISourceBlock<IKafkaMessage<TKey, TValue>> MessagesToHandle => this._messagesToHandle;

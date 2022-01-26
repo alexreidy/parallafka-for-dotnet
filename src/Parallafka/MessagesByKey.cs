@@ -55,7 +55,7 @@ namespace Parallafka
         {
             lock (this._messagesToHandleForKey)
             {
-                if (!this._messagesToHandleForKey.TryGetValue(message.Key, out var messagesQueuedForKey))
+                if (!this._messagesToHandleForKey.TryGetValue(message.Key, out Queue<IKafkaMessage<TKey, TValue>> messagesQueuedForKey))
                 {
                     // shouldn't happen
                     nextMessage = null;
