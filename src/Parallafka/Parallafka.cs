@@ -55,7 +55,7 @@ namespace Parallafka
             var handlerTarget = new ActionBlock<IKafkaMessage<TKey, TValue>>(handler.HandleMessage,
                 new ExecutionDataflowBlockOptions
                 {
-                    BoundedCapacity = maxQueuedMessages,
+                    BoundedCapacity = Math.Max(maxQueuedMessages, this._config.MaxDegreeOfParallelism),
                     MaxDegreeOfParallelism = this._config.MaxDegreeOfParallelism
                 });
 
