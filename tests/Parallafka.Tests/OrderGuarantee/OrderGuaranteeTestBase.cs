@@ -61,7 +61,7 @@ namespace Parallafka.Tests.OrderGuarantee
             consumptionVerifier.AddSentMessages(messagesToSend);
 
             int totalReceived = 0;
-            CancellationTokenSource stopConsuming = new CancellationTokenSource();
+            using CancellationTokenSource stopConsuming = new CancellationTokenSource();
             await parallafka.ConsumeAsync(async msg =>
             {
                 var rng = new Random();

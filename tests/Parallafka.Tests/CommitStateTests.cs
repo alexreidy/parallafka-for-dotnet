@@ -13,7 +13,7 @@ namespace Parallafka.Tests
         public async Task EnqueuesOnlyUpToMax()
         {
             //  given
-            var stop = new CancellationTokenSource();
+            using var stop = new CancellationTokenSource();
             var cs = new CommitState<string, string>(5, stop.Token);
             var messages = Enumerable.Range(0, 6)
                 .Select(i => new KafkaMessage<string, string>("key", "value", new RecordOffset(0, i)))
@@ -25,7 +25,7 @@ namespace Parallafka.Tests
             }
 
             var message6 = messages.Last();
-            var waitToken = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+            using var waitToken = new CancellationTokenSource(TimeSpan.FromSeconds(1));
 
             // when/then
             var enqueueTask = cs.EnqueueMessageAsync(message6);

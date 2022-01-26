@@ -42,25 +42,18 @@ namespace Parallafka.Adapters.ConfluentKafka
         {
             await Task.Yield();
             ConsumeResult<TKey, TValue> result;
-            try
+
+            for (;;)
             {
-                do
+                result = this._confluentConsumer.Consume(cancellationToken);
+                if (result.IsPartitionEOF)
                 {
-                    result = this._confluentConsumer.Consume(cancellationToken);
-                    if (result.IsPartitionEOF)
-                    {
-                        await Task.Delay(50);
-                    }
-                    else
-                    {
-                        break;
-                    }
+                    await Task.Delay(50, cancellationToken);
                 }
-                while (!cancellationToken.IsCancellationRequested);
-            }
-            catch (OperationCanceledException)
-            {
-                return null;
+                else
+                {
+                    break;
+                }
             }
 
             IKafkaMessage<TKey, TValue> msg = new KafkaMessage<TKey, TValue>(
