@@ -1,4 +1,5 @@
-﻿using System.Threading;
+﻿using System;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Threading.Tasks.Dataflow;
 using Parallafka.KafkaConsumer;
@@ -10,8 +11,6 @@ namespace Parallafka
         private readonly CommitState<TKey, TValue> _commitState;
         private readonly MessagesByKey<TKey, TValue> _messageByKey;
         private readonly CancellationToken _stopToken;
-
-
         private readonly BufferBlock<IKafkaMessage<TKey, TValue>> _messagesToHandle;
 
         public MessageRouter(
@@ -39,9 +38,16 @@ namespace Parallafka
                 return;
             }
 
-            if (!await this._messagesToHandle.SendAsync(message, this._stopToken))
+            try
             {
-                Parallafka<TKey, TValue>.WriteLine($"MR: {message.Key} {message.Offset} SendAsync failed!");
+                if (!await this._messagesToHandle.SendAsync(message, this._stopToken))
+                {
+                    Parallafka<TKey, TValue>.WriteLine($"MR: {message.Key} {message.Offset} SendAsync failed!");
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // ignore
             }
         }
     }
