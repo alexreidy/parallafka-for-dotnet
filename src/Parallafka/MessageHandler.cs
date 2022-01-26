@@ -18,6 +18,11 @@ namespace Parallafka
         private readonly BufferBlock<IKafkaMessage<TKey, TValue>> _messageHandled;
         private readonly CancellationToken _stopToken;
 
+        private long _messagesHandled;
+        private long _messagesErrored;
+        private long _messagesSent;
+        private long _messagesNotSent;
+
         public MessageHandler(
             Func<IKafkaMessage<TKey, TValue>, Task> messageHandlerAsync,
             ILogger logger,
@@ -37,14 +42,29 @@ namespace Parallafka
         /// </summary>
         public ISourceBlock<IKafkaMessage<TKey, TValue>> MessageHandled => this._messageHandled;
 
+        public object GetStats()
+        {
+            return new
+            {
+                InputCount = this._messageHandled.Count,
+                MessagesHandled = this._messagesHandled,
+                MessagesSent = this._messagesSent,
+                MessagesNotSent = this._messagesNotSent,
+                MessagesErrored = this._messagesErrored
+            };
+        }
+
         public async Task HandleMessage(IKafkaMessage<TKey, TValue> message)
         {
+            Interlocked.Increment(ref this._messagesHandled);
+
             try
             {
                 await this._messageHandlerAsync(message);
             }
             catch (Exception e)
             {
+                Interlocked.Increment(ref this._messagesErrored);
                 // TODO: User is responsible for handling errors but should we do anything else here?
                 this._logger.LogError(e,
                     $"Unhandled exception in handler callback. Warning: Still attempting to commit this and handle further messages. Partition={message.Offset.Partition}, Offset={message.Offset.Offset}");
@@ -56,13 +76,19 @@ namespace Parallafka
 
             try
             {
-                if (!await this._messageHandled.SendAsync(message, this._stopToken))
+                if (await this._messageHandled.SendAsync(message, this._stopToken))
                 {
+                    Interlocked.Increment(ref this._messagesSent);
+                }
+                else
+                {
+                    Interlocked.Increment(ref this._messagesNotSent);
                     Parallafka<TKey, TValue>.WriteLine($"Handler: {message.Key} {message.Offset} SendAsync failed!");
                 }
             }
             catch (OperationCanceledException)
             {
+                Interlocked.Increment(ref this._messagesNotSent);
             }
         }
     }

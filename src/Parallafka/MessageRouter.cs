@@ -12,6 +12,10 @@ namespace Parallafka
         private readonly MessagesByKey<TKey, TValue> _messageByKey;
         private readonly CancellationToken _stopToken;
         private readonly BufferBlock<IKafkaMessage<TKey, TValue>> _messagesToHandle;
+        private long _messagesRouted;
+        private long _messagesSkipped;
+        private long _messagesHandled;
+        private long _messagesNotHandled;
 
         public MessageRouter(
             CommitState<TKey, TValue> commitState,
@@ -27,14 +31,29 @@ namespace Parallafka
             });
         }
 
+        public object GetStats()
+        {
+            return new
+            {
+                MessagesRouted = this._messagesRouted,
+                MessagesHandled = this._messagesHandled,
+                MessagesNotHandled = this._messagesNotHandled,
+                MessagesSkipped = this._messagesSkipped,
+                IncomingQueueSize = this._messagesToHandle.Count
+            };
+        }
+
         public ISourceBlock<IKafkaMessage<TKey, TValue>> MessagesToHandle => this._messagesToHandle;
 
         public async Task RouteMessage(IKafkaMessage<TKey, TValue> message)
         {
+            Interlocked.Increment(ref _messagesRouted);
+
             await this._commitState.EnqueueMessageAsync(message);
 
             if (!this._messageByKey.TryAddMessageToHandle(message))
             {
+                Interlocked.Increment(ref _messagesSkipped);
                 return;
             }
 
@@ -42,7 +61,12 @@ namespace Parallafka
             {
                 if (!await this._messagesToHandle.SendAsync(message, this._stopToken))
                 {
+                    Interlocked.Increment(ref _messagesNotHandled);
                     Parallafka<TKey, TValue>.WriteLine($"MR: {message.Key} {message.Offset} SendAsync failed!");
+                }
+                else
+                {
+                    Interlocked.Increment(ref _messagesHandled);
                 }
             }
             catch (OperationCanceledException)

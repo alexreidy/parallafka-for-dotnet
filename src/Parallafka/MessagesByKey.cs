@@ -1,5 +1,6 @@
 ﻿using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Threading.Tasks;
 using Parallafka.KafkaConsumer;
 
@@ -23,6 +24,17 @@ namespace Parallafka
             this._messagesToHandleForKey = new();
             this._completedSource = new();
             this.Completion = this._completedSource.Task;
+        }
+
+        public object GetStats()
+        {
+            lock (this._messagesToHandleForKey)
+            {
+                return new
+                {
+                    MessageCountsByKey = this._messagesToHandleForKey.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Count ?? 0)
+                };
+            }
         }
 
         /// <summary>

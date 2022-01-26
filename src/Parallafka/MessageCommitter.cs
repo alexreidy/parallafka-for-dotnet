@@ -12,6 +12,11 @@ namespace Parallafka
         private readonly CommitState<TKey, TValue> _commitState;
         private readonly ILogger _logger;
 
+        private long _messagesCommitted;
+        private long _messagesCommitErrors;
+        private long _messagesCommitLoops;
+        private bool _messageCommitLoopInProgress;
+
         public MessageCommitter(
             IKafkaConsumer<TKey, TValue> consumer,
             CommitState<TKey, TValue> commitState,
@@ -20,6 +25,18 @@ namespace Parallafka
             this._consumer = consumer;
             this._commitState = commitState;
             this._logger = logger;
+        }
+
+        public object GetStats()
+        {
+            return new
+            {
+                this._commitBlock.InputCount,
+                MessageCommitLoopInProgress = _messageCommitLoopInProgress,
+                MessagesCommitted = this._messagesCommitted,
+                MessagesCommitErrors = this._messagesCommitErrors,
+                MessagesCommitLoops = this._messagesCommitLoops
+            };
         }
 
         /// <summary>
@@ -36,13 +53,22 @@ namespace Parallafka
         /// <returns></returns>
         private async Task GetAndCommitAnyMessages(CancellationToken cancellationToken)
         {
-            Parallafka<TKey, TValue>.WriteLine("GetAndCommitAnyMessages start");
-            foreach (var message in this._commitState.GetMessagesToCommit())
+            Interlocked.Increment(ref this._messagesCommitLoops);
+            this._messageCommitLoopInProgress = true;
+            try
             {
-                await CommitMessage(message, cancellationToken);
-            }
+                Parallafka<TKey, TValue>.WriteLine("GetAndCommitAnyMessages start");
+                foreach (var message in this._commitState.GetMessagesToCommit())
+                {
+                    await CommitMessage(message, cancellationToken);
+                }
 
-            Parallafka<TKey, TValue>.WriteLine("GetAndCommitAnyMessages finish");
+                Parallafka<TKey, TValue>.WriteLine("GetAndCommitAnyMessages finish");
+            }
+            finally
+            {
+                this._messageCommitLoopInProgress = false;
+            }
         }
 
         private async Task CommitMessage(IKafkaMessage<TKey, TValue> messageToCommit, CancellationToken cancellationToken)
@@ -58,10 +84,12 @@ namespace Parallafka
                     // TODO: inject CancelToken for hard-stop strategy?
                     await this._consumer.CommitAsync(messageToCommit);
 
+                    Interlocked.Increment(ref this._messagesCommitted);
                     break;
                 }
                 catch (Exception e)
                 {
+                    Interlocked.Increment(ref this._messagesCommitErrors);
                     this._logger.LogError(e, "Error committing offsets");
                     await Task.Delay(99, cancellationToken);
                 }
