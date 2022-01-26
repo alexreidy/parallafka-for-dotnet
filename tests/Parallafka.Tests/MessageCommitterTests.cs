@@ -1,5 +1,4 @@
-﻿using System;
-using System.Threading.Tasks;
+﻿using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Parallafka.KafkaConsumer;
@@ -27,17 +26,13 @@ namespace Parallafka.Tests
             var mc = new MessageCommitter<string, string>(
                 consumer.Object,
                 commitState,
-                logger.Object,
-                TimeSpan.FromDays(1),
-                default);
+                logger.Object);
             kafkaMessage.WasHandled = wasHandled;
 
             // when
-            await mc.CommitNow();
-            mc.Complete();
-            await mc.Completion;
+            await mc.CommitNow(default);
 
-            this._output.WriteLine("Wait mc.Completion finished");
+            this._output.WriteLine("Wait mc.CommitNow finished");
 
             // then
             consumer.Verify(c => c.CommitAsync(It.Is<IKafkaMessage<string, string>>(r => r.Offset.Offset == 0 && r.Offset.Partition == 0)),
@@ -65,17 +60,13 @@ namespace Parallafka.Tests
             var mc = new MessageCommitter<string, string>(
                 consumer.Object,
                 commitState,
-                logger.Object,
-                TimeSpan.FromDays(1),
-                default);
+                logger.Object);
             kafkaMessage1.WasHandled = true;
             kafkaMessage2.WasHandled = true;
             kafkaMessage3.WasHandled = false;
 
             // when
-            await mc.CommitNow();
-            mc.Complete();
-            await mc.Completion;
+            await mc.CommitNow(default);
 
             // then
             consumer.Verify(c => c.CommitAsync(It.Is<IKafkaMessage<string, string>>(r => r.Offset.Equals(kafkaMessage2.Offset))), Times.Once);
@@ -100,17 +91,13 @@ namespace Parallafka.Tests
             var mc = new MessageCommitter<string, string>(
                 consumer.Object,
                 commitState,
-                logger.Object,
-                TimeSpan.FromDays(1),
-                default);
+                logger.Object);
             kafkaMessage1.WasHandled = true;
             kafkaMessage2.WasHandled = true;
             kafkaMessage3.WasHandled = true;
 
             // when
-            await mc.CommitNow();
-            mc.Complete();
-            await mc.Completion;
+            await mc.CommitNow(default);
 
             // then
             consumer.Verify(c => c.CommitAsync(It.Is<IKafkaMessage<string, string>>(r => r.Offset.Equals(kafkaMessage3.Offset))), Times.Once);

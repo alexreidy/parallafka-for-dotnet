@@ -10,9 +10,9 @@ namespace Parallafka
         ILogger Logger { get; }
 
         /// <summary>
-        /// The maximum delay for committing messages to Kafka
+        /// The maximum delay for committing messages to Kafka.  Use TimeSpan.Zero to commit as quickly as possible after processing the message.
         /// </summary>
-        TimeSpan? CommitDelay { get; }
+        TimeSpan CommitDelay { get; }
 
         /// <summary>
         /// Gets the maximum queued messages.  Defaults to 1000

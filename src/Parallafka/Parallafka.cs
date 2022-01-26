@@ -63,13 +63,19 @@ namespace Parallafka
             var committer = new MessageCommitter<TKey, TValue>(
                 this._consumer, 
                 commitState, 
-                this._logger, 
-                this._config.CommitDelay ?? TimeSpan.FromSeconds(5), 
-                localStop.Token);
-            var committerTarget = new ActionBlock<IKafkaMessage<TKey, TValue>>(m => committer.CommitNow(),
+                this._logger);
+            var committerTarget = new ActionBlock<IKafkaMessage<TKey, TValue>>(async m =>
+                {
+                    if (this._config.CommitDelay > TimeSpan.Zero)
+                    {
+                        await Task.Delay(this._config.CommitDelay, localStop.Token);
+                    }
+
+                    await committer.CommitNow(localStop.Token);
+                },
                 new ExecutionDataflowBlockOptions
                 {
-                    BoundedCapacity = 100,
+                    BoundedCapacity = 2,
                     MaxDegreeOfParallelism = 1
                 });
 
@@ -80,9 +86,12 @@ namespace Parallafka
             // . the finished router (send the next message for the key)
             // . the committer
             var messageHandledTarget = new ActionBlock<IKafkaMessage<TKey, TValue>>(
-                m => Task.WhenAll(
-                    finishedRouter.MessageHandlerFinished(m),
-                    committerTarget.SendAsync(m)),
+                m =>
+                {
+                    // it is OK if the Post returns false, this means there's already a commit processed
+                    committerTarget.Post(m);
+                    return finishedRouter.MessageHandlerFinished(m);
+                },
                 new ExecutionDataflowBlockOptions
                 {
                     BoundedCapacity = 1000
@@ -115,8 +124,6 @@ namespace Parallafka
             // wait for the committer to finish
             committerTarget.Complete();
             await committerTarget.Completion;
-            committer.Complete();
-            await committer.Completion;
 
             // commitState should be empty
             WriteLine($"ConsumeFinished: {commitState.GetStats()}");
