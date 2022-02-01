@@ -14,9 +14,11 @@ namespace Parallafka.Tests
         {
             //  given
             using var stop = new CancellationTokenSource();
+            var hitMax = false;
             var cs = new CommitState<string, string>(5, stop.Token);
+            cs.OnMessageQueueFull += (sender, args) => hitMax = true;
             var messages = Enumerable.Range(0, 6)
-                .Select(i => new KafkaMessage<string, string>("key", "value", new RecordOffset(0, i)))
+                .Select(i => KafkaMessage.Create("key", "value", new RecordOffset(0, i)).Wrapped())
                 .ToList();
 
             foreach (var message in messages.Take(5))
@@ -37,7 +39,7 @@ namespace Parallafka.Tests
 
             // when
             var message1 = messages.First();
-            message1.WasHandled = true;
+            message1.SetIsReadyToCommit();
 
             // then
             var list = cs.GetMessagesToCommit().ToList();
@@ -46,6 +48,7 @@ namespace Parallafka.Tests
 
             await Wait.ForTaskOrTimeoutAsync(enqueueTask, TimeSpan.FromSeconds(10),
                 () => throw new Exception("Timed out waiting for enqueueTask"));
+            Assert.True(hitMax);
         }
 
 
@@ -53,8 +56,10 @@ namespace Parallafka.Tests
         public async Task QueueStateIsCorrect()
         {
             //  given
+            var hitMax = false;
             var cs = new CommitState<string, string>(int.MaxValue, default);
-            var km = new KafkaMessage<string, string>("key", "value", new RecordOffset(0, 0));
+            cs.OnMessageQueueFull += (sender, args) => hitMax = true;
+            var km = KafkaMessage.Create("key", "value", new RecordOffset(0, 0)).Wrapped();
             Assert.Empty(cs.GetMessagesToCommit());
 
             // when
@@ -64,11 +69,12 @@ namespace Parallafka.Tests
             Assert.Empty(cs.GetMessagesToCommit());
 
             // when
-            km.WasHandled = true;
+            km.SetIsReadyToCommit();
 
             // then
             Assert.NotEmpty(cs.GetMessagesToCommit());
             Assert.Empty(cs.GetMessagesToCommit());
+            Assert.False(hitMax);
         }
 
         [Fact]
@@ -77,7 +83,7 @@ namespace Parallafka.Tests
             // given
             var cs = new CommitState<string, string>(int.MaxValue, default);
             var kms = Enumerable.Range(1, 5).Select(i =>
-                new KafkaMessage<string, string>("key", "value", new RecordOffset(0, i))).ToList();
+                KafkaMessage.Create("key", "value", new RecordOffset(0, i)).Wrapped()).ToList();
 
             // when
             foreach (var km in kms)
@@ -85,20 +91,20 @@ namespace Parallafka.Tests
                 await cs.EnqueueMessageAsync(km);
             }
 
-            IKafkaMessage<string, string> messageToCommit;
+            KafkaMessageWrapped<string, string> messageToCommit;
 
             // then
             Assert.Empty(cs.GetMessagesToCommit());
 
             // when
-            kms[2].WasHandled = true;
+            kms[2].SetIsReadyToCommit();
 
             // then
             Assert.Empty(cs.GetMessagesToCommit());
 
             // when
-            kms[0].WasHandled = true;
-            kms[1].WasHandled = true;
+            kms[0].SetIsReadyToCommit();
+            kms[1].SetIsReadyToCommit();
 
             // then
             var messagesToCommit = cs.GetMessagesToCommit().ToList();
@@ -112,7 +118,7 @@ namespace Parallafka.Tests
             // given
             var cs = new CommitState<string, string>(int.MaxValue, default);
             var kms = Enumerable.Range(1, 5).Select(i =>
-                new KafkaMessage<string, string>("key", "value", new RecordOffset(0, i))).ToList();
+                KafkaMessage.Create("key", "value", new RecordOffset(0, i)).Wrapped()).ToList();
 
             // when
             foreach (var km in kms)
@@ -130,11 +136,11 @@ namespace Parallafka.Tests
             // given
             var cs = new CommitState<string, string>(int.MaxValue, default);
             var kms = Enumerable.Range(1, 5).Select(i =>
-                new KafkaMessage<string, string>("key", "value", new RecordOffset(0, i))).ToList();
+                KafkaMessage.Create("key", "value", new RecordOffset(0, i)).Wrapped()).ToList();
 
             foreach (var km in kms)
             {
-                km.WasHandled = true;
+                km.SetIsReadyToCommit();
                 await cs.EnqueueMessageAsync(km);
             }
 
@@ -157,11 +163,11 @@ namespace Parallafka.Tests
             var kms =
                 Enumerable.Range(1, partitions).SelectMany(p =>
                     Enumerable.Range(1, messages).Select(i =>
-                        new KafkaMessage<string, string>("key", "value", new RecordOffset(p, i)))).ToList();
+                        KafkaMessage.Create("key", "value", new RecordOffset(p, i)).Wrapped())).ToList();
 
             foreach (var km in kms)
             {
-                km.WasHandled = true;
+                km.SetIsReadyToCommit();
                 await cs.EnqueueMessageAsync(km);
             }
 

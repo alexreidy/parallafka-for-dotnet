@@ -16,12 +16,14 @@ namespace Parallafka.Tests
         [Theory]
         [InlineData(1234567,100,1)]
         [InlineData(1234567,100,5)]
+        [InlineData(1234567,1000,5)]
         [InlineData(12,1000,10)]
         public async Task MaxMessageQueuedIsObeyed(int partitions, int maxMessagesQueued, int maxDegreeOfParallelism)
         {
             // given
             using var stop = new CancellationTokenSource();
-            using var giveUp = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var stopToken = stop.Token;
+            using var giveUp = new CancellationTokenSource(TimeSpan.FromSeconds(300000));
             var countTotalMessages = maxMessagesQueued * 2;
             var testCases = new TestCases(partitions, countTotalMessages);
             var consumer = new TestConsumer<string, string>(testCases.Messages);
@@ -43,17 +45,26 @@ namespace Parallafka.Tests
                     Interlocked.Increment(ref messagesConsumed);
                     try
                     {
-                        await Task.Delay(-1, stop.Token);
+                        await Task.Delay(-1, stopToken);
                     }
                     catch (OperationCanceledException)
                     {
                     }
                 },
-                stop.Token);
+                stopToken);
 
             while (consumer.MessagesQueued < maxMessagesQueued)
             {
-                await Task.Delay(100, giveUp.Token);
+                try
+                {
+                    await Task.Delay(100, giveUp.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    this._console.WriteLine($"Messages queued at timeout: {consumer.MessagesQueued}");
+                    this._console.WriteLine($"Messages handled at timeout: {messagesConsumed}");
+                    throw;
+                }
             }
 
             // then
@@ -67,7 +78,7 @@ namespace Parallafka.Tests
             this._console.WriteLine($"Messages queued after stop: {consumer.MessagesQueued}");
             this._console.WriteLine($"Messages handled after stop: {messagesConsumed}");
 
-            Assert.True(messagesConsumed >= maxMessagesQueued && messagesConsumed <= maxMessagesQueued + 2);
+            Assert.True(consumer.MessagesQueued >= maxMessagesQueued && consumer.MessagesQueued <= maxMessagesQueued + 5);
         }
 
         [Theory]
@@ -129,13 +140,13 @@ namespace Parallafka.Tests
         private class TestCases
         {
             public long[] Offsets { get; }
-            public List<KafkaMessage<string, string>> Messages { get; }
+            public List<IKafkaMessage<string, string>> Messages { get; }
 
             public TestCases(int numPartitions, int countTotalMessages)
             {
                 this.Offsets = new long[numPartitions];
                 this.Messages = Enumerable.Range(1, countTotalMessages)
-                    .Select(i => new KafkaMessage<string, string>(
+                    .Select(i => KafkaMessage.Create(
                         $"key{i % numPartitions}",
                         $"{i}",
                         new RecordOffset(i % numPartitions,

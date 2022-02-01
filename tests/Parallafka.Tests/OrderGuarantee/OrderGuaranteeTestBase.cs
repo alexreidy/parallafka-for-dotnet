@@ -50,9 +50,10 @@ namespace Parallafka.Tests.OrderGuarantee
                 {
                     key = keys[keys.Count - 2];
                 }
-                messagesToSend.Add(new KafkaMessage<string, string>(
+                messagesToSend.Add(KafkaMessage.Create(
                     key: key,
-                    value: totalMessagesSent.ToString()));
+                    value: totalMessagesSent.ToString(),
+                    offset: new RecordOffset(0, totalMessagesSent)));
             }
 
             Task publishTask = this.Topic.PublishAsync(messagesToSend);

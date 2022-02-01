@@ -15,7 +15,7 @@ namespace Parallafka
         private readonly Func<IKafkaMessage<TKey, TValue>, Task> _messageHandlerAsync;
         
         private readonly ILogger _logger;
-        private readonly BufferBlock<IKafkaMessage<TKey, TValue>> _messageHandled;
+        private readonly BufferBlock<KafkaMessageWrapped<TKey, TValue>> _messageHandled;
         private readonly CancellationToken _stopToken;
 
         private long _messagesHandled;
@@ -30,7 +30,7 @@ namespace Parallafka
         {
             this._messageHandlerAsync = messageHandlerAsync;
             this._logger = logger;
-            this._messageHandled = new BufferBlock<IKafkaMessage<TKey, TValue>>(new ExecutionDataflowBlockOptions
+            this._messageHandled = new BufferBlock<KafkaMessageWrapped<TKey, TValue>>(new ExecutionDataflowBlockOptions
             {
                 BoundedCapacity = 100
             });
@@ -40,7 +40,7 @@ namespace Parallafka
         /// <summary>
         /// Messages handled by HandleMessage are sent to this source block
         /// </summary>
-        public ISourceBlock<IKafkaMessage<TKey, TValue>> MessageHandled => this._messageHandled;
+        public ISourceBlock<KafkaMessageWrapped<TKey, TValue>> MessageHandled => this._messageHandled;
 
         public object GetStats()
         {
@@ -54,13 +54,13 @@ namespace Parallafka
             };
         }
 
-        public async Task HandleMessage(IKafkaMessage<TKey, TValue> message)
+        public async Task HandleMessage(KafkaMessageWrapped<TKey, TValue> message)
         {
             Interlocked.Increment(ref this._messagesHandled);
 
             try
             {
-                await this._messageHandlerAsync(message);
+                await this._messageHandlerAsync(message.Message);
             }
             catch (Exception e)
             {
@@ -70,7 +70,7 @@ namespace Parallafka
                     $"Unhandled exception in handler callback. Warning: Still attempting to commit this and handle further messages. Partition={message.Offset.Partition}, Offset={message.Offset.Offset}");
             }
 
-            message.WasHandled = true;
+            message.SetIsReadyToCommit();
 
             Parallafka<TKey, TValue>.WriteLine($"Handler: {message.Key} {message.Offset} WasHandled");
 

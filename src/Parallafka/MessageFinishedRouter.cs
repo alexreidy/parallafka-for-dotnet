@@ -8,7 +8,7 @@ namespace Parallafka
     internal class MessageFinishedRouter<TKey, TValue>
     {
         private readonly MessagesByKey<TKey, TValue> _messageByKey;
-        private readonly BufferBlock<IKafkaMessage<TKey, TValue>> _messagesToHandle;
+        private readonly BufferBlock<KafkaMessageWrapped<TKey, TValue>> _messagesToHandle;
 
         private long _messagesHandled;
         private long _messagesSkipped;
@@ -24,7 +24,7 @@ namespace Parallafka
             });
         }
 
-        public ISourceBlock<IKafkaMessage<TKey, TValue>> MessagesToHandle => this._messagesToHandle;
+        public ISourceBlock<KafkaMessageWrapped<TKey, TValue>> MessagesToHandle => this._messagesToHandle;
 
         public Task Completion => this._messageByKey.Completion;
 
@@ -45,7 +45,7 @@ namespace Parallafka
             this._messageByKey.Complete();
         }
 
-        public async Task MessageHandlerFinished(IKafkaMessage<TKey, TValue> message)
+        public async Task MessageHandlerFinished(KafkaMessageWrapped<TKey, TValue> message)
         {
             Interlocked.Increment(ref this._messagesHandled);
             // If there are any messages with the same key queued, make the next one available for handling.

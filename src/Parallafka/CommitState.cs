@@ -1,4 +1,5 @@
-﻿using System.Collections.Concurrent;
+﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -12,7 +13,7 @@ namespace Parallafka
     /// </summary>
     /// <typeparam name="TKey"></typeparam>
     /// <typeparam name="TValue"></typeparam>
-    internal class CommitState<TKey, TValue>
+    internal class CommitState<TKey, TValue> : IMessagesToCommit<TKey, TValue>
     {
         /// <summary>
         /// Maps partition number to a queue of the messages received from that partition.
@@ -20,12 +21,17 @@ namespace Parallafka
         /// It's safe to commit a handled message provided all earlier (lower-offset) messages have also been marked
         /// as handled.
         /// </summary>
-        private readonly Dictionary<int, ConcurrentQueue<IKafkaMessage<TKey, TValue>>> _messagesNotYetCommittedByPartition;
+        private readonly Dictionary<int, ConcurrentQueue<KafkaMessageWrapped<TKey, TValue>>> _messagesNotYetCommittedByPartition;
         private readonly ReaderWriterLockSlim _messagesNotYetCommittedByPartitionReaderWriterLock;
 
         private readonly SemaphoreSlim _canQueueMessage;
         private readonly CancellationToken _stopToken;
 
+        /// <summary>
+        /// Creates a new instance of CommitState
+        /// </summary>
+        /// <param name="maxMessagesQueued">The maximum messages that can be queued</param>
+        /// <param name="stopToken">A token that indicates the commit state should stop accepting new queued messages</param>
         public CommitState(int maxMessagesQueued, CancellationToken stopToken)
         {
             this._canQueueMessage = new(maxMessagesQueued);
@@ -34,13 +40,15 @@ namespace Parallafka
             this._messagesNotYetCommittedByPartitionReaderWriterLock = new();
         }
 
+        public event EventHandler OnMessageQueueFull;
+
         /// <summary>
         /// Returns an enumeration of messages that are ready to be committed to kafka.
         /// The commit queues are emptied as much as possible during this enumeration.
         /// </summary>
-        public IEnumerable<IKafkaMessage<TKey, TValue>> GetMessagesToCommit()
+        public IEnumerable<KafkaMessageWrapped<TKey, TValue>> GetMessagesToCommit()
         {
-            List<ConcurrentQueue<IKafkaMessage<TKey, TValue>>> allQueues;
+            List<ConcurrentQueue<KafkaMessageWrapped<TKey, TValue>>> allQueues;
 
             this._messagesNotYetCommittedByPartitionReaderWriterLock.EnterReadLock();
             try
@@ -54,7 +62,7 @@ namespace Parallafka
 
             foreach (var queue in allQueues)
             {
-                IKafkaMessage<TKey, TValue> messageToCommit = GetMessageToCommit(queue);
+                KafkaMessageWrapped<TKey, TValue> messageToCommit = GetMessageToCommit(queue);
 
                 if (messageToCommit != null)
                 {
@@ -63,18 +71,21 @@ namespace Parallafka
             }
         }
 
-        private IKafkaMessage<TKey, TValue> GetMessageToCommit(ConcurrentQueue<IKafkaMessage<TKey, TValue>> messagesInPartition)
+        private KafkaMessageWrapped<TKey, TValue> GetMessageToCommit(ConcurrentQueue<KafkaMessageWrapped<TKey, TValue>> messagesInPartition)
         {
-            IKafkaMessage<TKey, TValue> messageToCommit = null;
-
-            while (messagesInPartition.TryPeek(out IKafkaMessage<TKey, TValue> msg) && msg.WasHandled)
+            KafkaMessageWrapped<TKey, TValue> messageToCommit = null;
+            
+            var released = 0;
+            while (messagesInPartition.TryPeek(out KafkaMessageWrapped<TKey, TValue> msg) && msg.ReadyToCommit)
             {
+                released++;
                 messageToCommit = msg;
                 messagesInPartition.TryDequeue(out _);
+            }
 
-                this._canQueueMessage.Release();
-
-                Parallafka<TKey, TValue>.WriteLine($"CS:DequeueMessage: {msg.Key} {msg.Offset}");
+            if (released > 0)
+            {
+                this._canQueueMessage.Release(released);
             }
 
             Parallafka<TKey, TValue>.WriteLine($"CS:GetMsgToCommit: {(messageToCommit == null ? "[notfound]" : messageToCommit.Offset)}");
@@ -86,9 +97,9 @@ namespace Parallafka
         /// Adds the message to the commit queue to be committed after it is handled
         /// </summary>
         /// <param name="message"></param>
-        public async Task EnqueueMessageAsync(IKafkaMessage<TKey, TValue> message)
+        public async Task EnqueueMessageAsync(KafkaMessageWrapped<TKey, TValue> message)
         {
-            ConcurrentQueue<IKafkaMessage<TKey, TValue>> messagesInPartition;
+            ConcurrentQueue<KafkaMessageWrapped<TKey, TValue>> messagesInPartition;
 
             this._messagesNotYetCommittedByPartitionReaderWriterLock.EnterReadLock();
             try
@@ -118,7 +129,11 @@ namespace Parallafka
             }
 
             // ReSharper disable once InconsistentlySynchronizedField
-            await this._canQueueMessage.WaitAsync(-1, this._stopToken);
+            if (!this._canQueueMessage.Wait(0))
+            {
+                this.OnMessageQueueFull?.Invoke(this, EventArgs.Empty);
+                await this._canQueueMessage.WaitAsync(-1, this._stopToken);
+            }
 
             messagesInPartition.Enqueue(message);
             Parallafka<TKey, TValue>.WriteLine($"CS:EnqueueMessage: {message.Key} {message.Offset}");

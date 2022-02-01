@@ -1,7 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
+﻿using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Threading.Tasks.Dataflow;
@@ -16,16 +13,16 @@ namespace Parallafka.Tests
         public async Task SameKeyMessagesAreSentToDataflowCorrectly()
         {
             // given
-            var mbk = new MessagesByKey<string, string>();
+            var mbk = new MessagesByKey<string, string>(default);
             var mfr = new MessageFinishedRouter<string, string>(mbk);
             var totalMessages = 5;
             var messages = Enumerable.Range(1, totalMessages)
-                .Select(i => new KafkaMessage<string, string>("key", "value", new RecordOffset(0, i)))
+                .Select(i => KafkaMessage.Create("key", "value", new RecordOffset(0, i)).Wrapped())
                 .ToList();
 
             var sentMessageCount = 0;
             IRecordOffset lastOffset = null;
-            var flow = new ActionBlock<IKafkaMessage<string, string>>(m =>
+            var flow = new ActionBlock<KafkaMessageWrapped<string, string>>(m =>
             {
                 lastOffset = m.Offset;
                 Interlocked.Increment(ref sentMessageCount);

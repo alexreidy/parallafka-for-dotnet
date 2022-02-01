@@ -1,4 +1,3 @@
-using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Confluent.Kafka;
@@ -56,7 +55,7 @@ namespace Parallafka.Adapters.ConfluentKafka
                 }
             }
 
-            IKafkaMessage<TKey, TValue> msg = new KafkaMessage<TKey, TValue>(
+            IKafkaMessage<TKey, TValue> msg = KafkaMessage.Create(
                 result.Message.Key,
                 result.Message.Value,
                 new RecordOffset(result.Partition, result.Offset));

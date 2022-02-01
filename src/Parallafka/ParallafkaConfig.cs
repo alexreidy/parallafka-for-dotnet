@@ -3,7 +3,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Parallafka
 {
-    public class ParallafkaConfig<TKey, TValue> : IParallafkaConfig<TKey, TValue>
+    public class ParallafkaConfig<TKey, TValue> : IParallafkaConfig
     {
         /// <inheritdoc />
         /// <remarks>Defaults to 3</remarks>
@@ -19,6 +19,6 @@ namespace Parallafka
         public TimeSpan CommitDelay { get; set; } = TimeSpan.FromSeconds(5);
 
         /// <inheritdoc />
-        public int? MaxQueuedMessages { get; set; } = null;
+        public int MaxQueuedMessages { get; set; } = 1_000;
     }
 }

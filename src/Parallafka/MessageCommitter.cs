@@ -6,22 +6,28 @@ using Parallafka.KafkaConsumer;
 
 namespace Parallafka
 {
-    internal class MessageCommitter<TKey, TValue>
+    /// <summary>
+    /// Commits offsets to Kafka
+    /// </summary>
+    /// <typeparam name="TKey">The key type</typeparam>
+    /// <typeparam name="TValue">The value type</typeparam>
+    internal class MessageCommitter<TKey, TValue> : IMessageCommitter
     {
         private readonly IKafkaConsumer<TKey, TValue> _consumer;
-        private readonly CommitState<TKey, TValue> _commitState;
+        private readonly IMessagesToCommit<TKey, TValue> _commitState;
         private readonly ILogger _logger;
+        private readonly SemaphoreSlim _committerLock;
 
         private long _messagesCommitted;
         private long _messagesCommitErrors;
         private long _messagesCommitLoops;
-        private bool _messageCommitLoopInProgress;
 
         public MessageCommitter(
             IKafkaConsumer<TKey, TValue> consumer,
-            CommitState<TKey, TValue> commitState,
+            IMessagesToCommit<TKey, TValue> commitState,
             ILogger logger)
         {
+            this._committerLock = new SemaphoreSlim(1, 1);
             this._consumer = consumer;
             this._commitState = commitState;
             this._logger = logger;
@@ -31,7 +37,7 @@ namespace Parallafka
         {
             return new
             {
-                MessageCommitLoopInProgress = _messageCommitLoopInProgress,
+                MessageCommitLoopInProgress = _committerLock.CurrentCount > 0,
                 MessagesCommitted = this._messagesCommitted,
                 MessagesCommitErrors = this._messagesCommitErrors,
                 MessagesCommitLoops = this._messagesCommitLoops
@@ -41,36 +47,27 @@ namespace Parallafka
         /// <summary>
         /// Commits any messages that can be committed
         /// </summary>
-        public Task CommitNow(CancellationToken cancellationToken)
+        public async Task CommitNow(CancellationToken cancellationToken)
         {
-            return this.GetAndCommitAnyMessages(cancellationToken);
-        }
-
-        /// <summary>
-        /// Gets any possible messages to commit and commits them
-        /// </summary>
-        /// <returns></returns>
-        private async Task GetAndCommitAnyMessages(CancellationToken cancellationToken)
-        {
-            Interlocked.Increment(ref this._messagesCommitLoops);
-            this._messageCommitLoopInProgress = true;
+            await this._committerLock.WaitAsync(cancellationToken);
             try
             {
-                Parallafka<TKey, TValue>.WriteLine("GetAndCommitAnyMessages start");
+                var loop = Interlocked.Increment(ref this._messagesCommitLoops);
+                Parallafka<TKey, TValue>.WriteLine($"GetAndCommitAnyMessages start call#{loop}");
                 foreach (var message in this._commitState.GetMessagesToCommit())
                 {
                     await CommitMessage(message, cancellationToken);
                 }
 
-                Parallafka<TKey, TValue>.WriteLine("GetAndCommitAnyMessages finish");
+                Parallafka<TKey, TValue>.WriteLine($"GetAndCommitAnyMessages finish call#{loop}");
             }
             finally
             {
-                this._messageCommitLoopInProgress = false;
+                this._committerLock.Release();
             }
         }
 
-        private async Task CommitMessage(IKafkaMessage<TKey, TValue> messageToCommit, CancellationToken cancellationToken)
+        private async Task CommitMessage(KafkaMessageWrapped<TKey, TValue> messageToCommit, CancellationToken cancellationToken)
         {
             for(;;)
             {
@@ -81,7 +78,7 @@ namespace Parallafka
                     cancellationToken.ThrowIfCancellationRequested();
 
                     // TODO: inject CancelToken for hard-stop strategy?
-                    await this._consumer.CommitAsync(messageToCommit);
+                    await this._consumer.CommitAsync(messageToCommit.Message);
 
                     Interlocked.Increment(ref this._messagesCommitted);
                     break;

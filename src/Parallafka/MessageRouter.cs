@@ -11,7 +11,7 @@ namespace Parallafka
         private readonly CommitState<TKey, TValue> _commitState;
         private readonly MessagesByKey<TKey, TValue> _messageByKey;
         private readonly CancellationToken _stopToken;
-        private readonly BufferBlock<IKafkaMessage<TKey, TValue>> _messagesToHandle;
+        private readonly BufferBlock<KafkaMessageWrapped<TKey, TValue>> _messagesToHandle;
         private long _messagesRouted;
         private long _messagesSkipped;
         private long _messagesHandled;
@@ -25,7 +25,7 @@ namespace Parallafka
             this._commitState = commitState;
             this._messageByKey = messageByKey;
             this._stopToken = stopToken;
-            this._messagesToHandle = new BufferBlock<IKafkaMessage<TKey, TValue>>(new DataflowBlockOptions
+            this._messagesToHandle = new BufferBlock<KafkaMessageWrapped<TKey, TValue>>(new DataflowBlockOptions
             {
                 BoundedCapacity = 1
             });
@@ -43,17 +43,22 @@ namespace Parallafka
             };
         }
 
-        public ISourceBlock<IKafkaMessage<TKey, TValue>> MessagesToHandle => this._messagesToHandle;
+        public ISourceBlock<KafkaMessageWrapped<TKey, TValue>> MessagesToHandle => this._messagesToHandle;
 
-        public async Task RouteMessage(IKafkaMessage<TKey, TValue> message)
+        public async Task RouteMessage(KafkaMessageWrapped<TKey, TValue> message)
         {
-            Interlocked.Increment(ref _messagesRouted);
+            if (this._stopToken.IsCancellationRequested)
+            {
+                return;
+            }
+
+            Interlocked.Increment(ref this._messagesRouted);
 
             await this._commitState.EnqueueMessageAsync(message);
 
             if (!this._messageByKey.TryAddMessageToHandle(message))
             {
-                Interlocked.Increment(ref _messagesSkipped);
+                Interlocked.Increment(ref this._messagesSkipped);
                 return;
             }
 
@@ -61,12 +66,12 @@ namespace Parallafka
             {
                 if (!await this._messagesToHandle.SendAsync(message, this._stopToken))
                 {
-                    Interlocked.Increment(ref _messagesNotHandled);
+                    Interlocked.Increment(ref this._messagesNotHandled);
                     Parallafka<TKey, TValue>.WriteLine($"MR: {message.Key} {message.Offset} SendAsync failed!");
                 }
                 else
                 {
-                    Interlocked.Increment(ref _messagesHandled);
+                    Interlocked.Increment(ref this._messagesHandled);
                 }
             }
             catch (OperationCanceledException)
