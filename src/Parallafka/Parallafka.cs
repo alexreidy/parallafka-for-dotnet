@@ -32,7 +32,7 @@ namespace Parallafka
         {
             var maxQueuedMessages = this._config.MaxQueuedMessages ?? 1000;
             // Are there any deadlocks or performance issues with these caps in general?
-            using var localStop = new CancellationTokenSource();
+            var localStop = new CancellationTokenSource();
             var commitState = new CommitState<TKey, TValue>(maxQueuedMessages, localStop.Token);
             var messagesByKey = new MessagesByKey<TKey, TValue>();
 
@@ -124,53 +124,50 @@ namespace Parallafka
         
         private async Task KafkaPollerThread(ITargetBlock<IKafkaMessage<TKey, TValue>> routingTarget, CancellationToken stopToken)
         {
-            int? delay = null;
-
             try
             {
-                for(;;)
+                while (!stopToken.IsCancellationRequested)
                 {
                     // TODO: Error handling
                     try
                     {
-                        if (delay.HasValue)
-                        {
-                            await Task.Delay(delay.Value, stopToken);
-                            delay = null;
-                        }
-
                         IKafkaMessage<TKey, TValue> message = await this._consumer.PollAsync(stopToken);
                         if (message == null)
                         {
-                            stopToken.ThrowIfCancellationRequested();
-                            this._logger.LogWarning("Polled a null message while not shutting down: breach of IKafkaConsumer contract");
-                            delay = 50;
+                            if (!stopToken.IsCancellationRequested)
+                            {
+                                this._logger.LogWarning(
+                                    "Polled a null message while not shutting down: breach of IKafkaConsumer contract");
+                                await Task.Delay(50);
+                            }
                         }
                         else
                         {
-                            WriteLine($"Poller: Sending {message.Key} {message.Offset}");
-                            await routingTarget.SendAsync(message, stopToken);
-                            WriteLine($"Poller: Sent {message.Key} {message.Offset}");
+                            try
+                            {
+                                WriteLine($"Poller: Sending {message.Key} {message.Offset}");
+                                await routingTarget.SendAsync(message, stopToken);
+                                WriteLine($"Poller: Sent {message.Key} {message.Offset}");
+                            }
+                            catch (OperationCanceledException)
+                            {
+                                break;
+                            }
                         }
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        throw;
                     }
                     catch (Exception e)
                     {
                         this._logger.LogError(e, "Error in Kafka poller thread");
-                        delay = 333;
+                        await Task.Delay(333);
                     }
                 }
-            }
-            catch (OperationCanceledException)
-            {
             }
             catch (Exception e)
             {
                 this._logger.LogCritical(e, "Fatal error in Kafka poller thread");
             }
         }
+
+
     }
 }

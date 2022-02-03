@@ -20,8 +20,8 @@ namespace Parallafka.Tests
         public async Task MaxMessageQueuedIsObeyed(int partitions, int maxMessagesQueued, int maxDegreeOfParallelism)
         {
             // given
-            using var stop = new CancellationTokenSource();
-            using var giveUp = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var stop = new CancellationTokenSource();
+            var giveUp = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             var countTotalMessages = maxMessagesQueued * 2;
             var testCases = new TestCases(partitions, countTotalMessages);
             var consumer = new TestConsumer<string, string>(testCases.Messages);
@@ -81,7 +81,7 @@ namespace Parallafka.Tests
         public async Task ConsumedMessagesAndCommitsMatch(int partitions, int countTotalMessages, int maxDegreeOfParallelism)
         {
             // given
-            using var stop = new CancellationTokenSource();
+            var stop = new CancellationTokenSource();
             var testCases = new TestCases(partitions, countTotalMessages);
             var consumer = new TestConsumer<string, string>(testCases.Messages);
             var logger = new Mock<ILogger>();
@@ -167,11 +167,21 @@ namespace Parallafka.Tests
 
             public async Task<IKafkaMessage<TKey, TValue>> PollAsync(CancellationToken cancellationToken)
             {
-                cancellationToken.ThrowIfCancellationRequested();
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    return null;
+                }
 
                 if (!_enumerator.MoveNext())
                 {
-                    await Task.Delay(-1, cancellationToken);
+                    try
+                    {
+                        await Task.Delay(-1, cancellationToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        return null;
+                    }
                 }
 
                 Interlocked.Increment(ref this._messagesQueued);

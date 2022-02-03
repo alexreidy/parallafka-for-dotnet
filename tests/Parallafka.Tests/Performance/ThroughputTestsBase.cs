@@ -43,18 +43,10 @@ namespace Parallafka.Tests.Performance
             TimeSpan duration = await this.TimeConsumerAsync(consumer, consumeAllAsync: async (Func<IKafkaMessage<string, string>, Task> consumeAsync, CancellationToken stop) =>
             {
                 IKafkaMessage<string, string> message;
-                try
+                while ((message = await consumer.PollAsync(new CancellationTokenSource(5000).Token)) != null)
                 {
-                    for (;;)
-                    {
-                        using var token = new CancellationTokenSource(5000);
-                        message = await consumer.PollAsync(token.Token);
-                        await consumeAsync(message);
-                        await consumer.CommitAsync(message);
-                    }
-                }
-                catch (OperationCanceledException)
-                {
+                    await consumeAsync(message);
+                    await consumer.CommitAsync(message);
                 }
             });
             return duration;
