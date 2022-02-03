@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -14,9 +13,9 @@ namespace Parallafka.KafkaConsumer
     {
         /// <summary>
         /// Polls Kafka for the next record.
-        /// Returns null iff the cancellationToken is cancelled.
+        /// Returns the next record, or throws an <see cref="OperationCanceledException"/> if the cancellationToken is cancelled.
         /// </summary>
-        Task<IKafkaMessage<TKey, TValue>> PollAsync(CancellationToken cancellationToken); // TODO: What's the contract as far as nulls, op cancelled ex
+        Task<IKafkaMessage<TKey, TValue>> PollAsync(CancellationToken cancellationToken);
 
         Task CommitAsync(IKafkaMessage<TKey, TValue> message);
     }
