@@ -1,5 +1,4 @@
-﻿using System;
-using System.Threading.Tasks;
+﻿using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Parallafka.KafkaConsumer;
@@ -22,22 +21,21 @@ namespace Parallafka.Tests
             var consumer = new Mock<IKafkaConsumer<string, string>>();
             var logger = new Mock<ILogger>();
             var commitState = new CommitState<string, string>(int.MaxValue, default);
-            var kafkaMessage = new KafkaMessage<string, string>("key", "value", new RecordOffset(0, 0));
+            var kafkaMessage = KafkaMessage.Create("key", "value", new RecordOffset(0, 0)).Wrapped();
             await commitState.EnqueueMessageAsync(kafkaMessage);
             var mc = new MessageCommitter<string, string>(
                 consumer.Object,
                 commitState,
-                logger.Object,
-                TimeSpan.FromDays(1),
-                default);
-            kafkaMessage.WasHandled = wasHandled;
+                logger.Object);
+            if (wasHandled)
+            {
+                kafkaMessage.SetIsReadyToCommit();
+            }
 
             // when
-            await mc.CommitNow();
-            mc.Complete();
-            await mc.Completion;
+            await mc.CommitNow(default);
 
-            this._output.WriteLine("Wait mc.Completion finished");
+            this._output.WriteLine("Wait mc.CommitNow finished");
 
             // then
             consumer.Verify(c => c.CommitAsync(It.Is<IKafkaMessage<string, string>>(r => r.Offset.Offset == 0 && r.Offset.Partition == 0)),
@@ -56,26 +54,21 @@ namespace Parallafka.Tests
             var consumer = new Mock<IKafkaConsumer<string, string>>();
             var logger = new Mock<ILogger>();
             var commitState = new CommitState<string, string>(int.MaxValue, default);
-            var kafkaMessage1 = new KafkaMessage<string, string>("key", "value", new RecordOffset(0, 1));
-            var kafkaMessage2 = new KafkaMessage<string, string>("key", "value", new RecordOffset(0, 2));
-            var kafkaMessage3 = new KafkaMessage<string, string>("key", "value", new RecordOffset(0, 3));
+            var kafkaMessage1 = KafkaMessage.Create("key", "value", new RecordOffset(0, 1)).Wrapped();
+            var kafkaMessage2 = KafkaMessage.Create("key", "value", new RecordOffset(0, 2)).Wrapped();
+            var kafkaMessage3 = KafkaMessage.Create("key", "value", new RecordOffset(0, 3)).Wrapped();
             await commitState.EnqueueMessageAsync(kafkaMessage1);
             await commitState.EnqueueMessageAsync(kafkaMessage2);
             await commitState.EnqueueMessageAsync(kafkaMessage3);
             var mc = new MessageCommitter<string, string>(
                 consumer.Object,
                 commitState,
-                logger.Object,
-                TimeSpan.FromDays(1),
-                default);
-            kafkaMessage1.WasHandled = true;
-            kafkaMessage2.WasHandled = true;
-            kafkaMessage3.WasHandled = false;
+                logger.Object);
+            kafkaMessage1.SetIsReadyToCommit();
+            kafkaMessage2.SetIsReadyToCommit();
 
             // when
-            await mc.CommitNow();
-            mc.Complete();
-            await mc.Completion;
+            await mc.CommitNow(default);
 
             // then
             consumer.Verify(c => c.CommitAsync(It.Is<IKafkaMessage<string, string>>(r => r.Offset.Equals(kafkaMessage2.Offset))), Times.Once);
@@ -91,26 +84,22 @@ namespace Parallafka.Tests
             var consumer = new Mock<IKafkaConsumer<string, string>>();
             var logger = new Mock<ILogger>();
             var commitState = new CommitState<string, string>(int.MaxValue, default);
-            var kafkaMessage1 = new KafkaMessage<string, string>("key", "value", new RecordOffset(0, 1));
-            var kafkaMessage2 = new KafkaMessage<string, string>("key", "value", new RecordOffset(0, 2));
-            var kafkaMessage3 = new KafkaMessage<string, string>("key", "value", new RecordOffset(0, 3));
+            var kafkaMessage1 = KafkaMessage.Create("key", "value", new RecordOffset(0, 1)).Wrapped();
+            var kafkaMessage2 = KafkaMessage.Create("key", "value", new RecordOffset(0, 2)).Wrapped();
+            var kafkaMessage3 = KafkaMessage.Create("key", "value", new RecordOffset(0, 3)).Wrapped();
             await commitState.EnqueueMessageAsync(kafkaMessage1);
             await commitState.EnqueueMessageAsync(kafkaMessage2);
             await commitState.EnqueueMessageAsync(kafkaMessage3);
             var mc = new MessageCommitter<string, string>(
                 consumer.Object,
                 commitState,
-                logger.Object,
-                TimeSpan.FromDays(1),
-                default);
-            kafkaMessage1.WasHandled = true;
-            kafkaMessage2.WasHandled = true;
-            kafkaMessage3.WasHandled = true;
+                logger.Object);
+            kafkaMessage1.SetIsReadyToCommit();
+            kafkaMessage2.SetIsReadyToCommit();
+            kafkaMessage3.SetIsReadyToCommit();
 
             // when
-            await mc.CommitNow();
-            mc.Complete();
-            await mc.Completion;
+            await mc.CommitNow(default);
 
             // then
             consumer.Verify(c => c.CommitAsync(It.Is<IKafkaMessage<string, string>>(r => r.Offset.Equals(kafkaMessage3.Offset))), Times.Once);

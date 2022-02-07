@@ -28,19 +28,23 @@ namespace Parallafka.Tests.Contracts
         public virtual async Task RawConsumerHangsAtPartitionEndsTillNewMessageOrCancellationAsync()
         {
             bool receivedNullMsg = false;
-            var cts = new CancellationTokenSource(60_000);
+            using var cts = new CancellationTokenSource(60_000);
             await using IKafkaConsumer<string, string> consumer = await this.Topic.GetConsumerAsync("rawConsumer");
             await this.AssertConsumerHangsAtPartitionEndsTillNewMessageAsync(consumeTopicAsync: async (handleAsync, ct) =>
             {
                 while (true)
                 {
-                    IKafkaMessage<string, string> message = await consumer.PollAsync(cts.Token);
-                    if (message == null)
+                    try
+                    {
+                        IKafkaMessage<string, string> message = await consumer.PollAsync(cts.Token);
+
+                        await handleAsync(message);
+                    }
+                    catch (OperationCanceledException)
                     {
                         receivedNullMsg = true;
                         break;
                     }
-                    await handleAsync(message);
                 }
             }, () =>
             {

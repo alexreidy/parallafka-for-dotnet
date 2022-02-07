@@ -1,7 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
+﻿using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Threading.Tasks.Dataflow;
@@ -41,7 +38,7 @@ namespace Parallafka.Tests.Helpers
                 var partition = ComputePartition(message.Key);
                 var offset = Interlocked.Increment(ref this._partitionOffsets[partition]) - 1;
 
-                var newMessage = new KafkaMessage<string, string>(
+                var newMessage = KafkaMessage.Create(
                     key: message.Key,
                     value: message.Value,
                     offset: new RecordOffset(partition, offset));
@@ -66,16 +63,9 @@ namespace Parallafka.Tests.Helpers
                 return ValueTask.CompletedTask;
             }
 
-            public async Task<IKafkaMessage<string, string>> PollAsync(CancellationToken cancellationToken)
+            public Task<IKafkaMessage<string, string>> PollAsync(CancellationToken cancellationToken)
             {
-                try
-                {
-                    return await this._messages.ReceiveAsync(cancellationToken);
-                }
-                catch (OperationCanceledException)
-                {
-                    return null;
-                }
+                return this._messages.ReceiveAsync(cancellationToken);
             }
 
             public Task CommitAsync(IKafkaMessage<string, string> message)

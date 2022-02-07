@@ -13,12 +13,12 @@ namespace Parallafka.Tests
         {
             // given
             var cs = new CommitState<string, string>(int.MaxValue, default);
-            var mbk = new MessagesByKey<string, string>();
+            var mbk = new MessagesByKey<string, string>(default);
             var mr = new MessageRouter<string, string>(cs, mbk, default);
-            var message1 = new KafkaMessage<string, string>("key", "value", new RecordOffset(0, 0));
-            var message2 = new KafkaMessage<string, string>("key", "value", new RecordOffset(0, 1));
+            var message1 = KafkaMessage.Create("key", "value", new RecordOffset(0, 0)).Wrapped();
+            var message2 = KafkaMessage.Create("key", "value", new RecordOffset(0, 1)).Wrapped();
             var messageCount = 0;
-            var flow = new ActionBlock<IKafkaMessage<string, string>>(m =>
+            var flow = new ActionBlock<KafkaMessageWrapped<string, string>>(m =>
             {
                 Interlocked.Increment(ref messageCount);
             });
@@ -41,12 +41,12 @@ namespace Parallafka.Tests
         {
             // given
             var cs = new CommitState<string, string>(int.MaxValue, default);
-            var mbk = new MessagesByKey<string, string>();
+            var mbk = new MessagesByKey<string, string>(default);
             var mr = new MessageRouter<string, string>(cs, mbk, default);
-            var message1 = new KafkaMessage<string, string>("key", "value", new RecordOffset(0, 0));
-            var message2 = new KafkaMessage<string, string>("key", "value", new RecordOffset(0, 1));
+            var message1 = KafkaMessage.Create("key", "value", new RecordOffset(0, 0)).Wrapped();
+            var message2 = KafkaMessage.Create("key", "value", new RecordOffset(0, 1)).Wrapped();
             var messageCount = 0;
-            var flow = new ActionBlock<IKafkaMessage<string, string>>(m =>
+            var flow = new ActionBlock<KafkaMessageWrapped<string, string>>(m =>
             {
                 Interlocked.Increment(ref messageCount);
             });

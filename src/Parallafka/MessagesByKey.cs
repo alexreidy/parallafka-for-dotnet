@@ -1,5 +1,7 @@
 ﻿using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Parallafka.KafkaConsumer;
 
@@ -14,15 +16,32 @@ namespace Parallafka
     /// </summary>
     internal class MessagesByKey<TKey, TValue>
     {
-        private readonly Dictionary<TKey, Queue<IKafkaMessage<TKey, TValue>>> _messagesToHandleForKey;
+        private readonly CancellationToken _cancellationToken;
+        private readonly Dictionary<TKey, Queue<KafkaMessageWrapped<TKey, TValue>>> _messagesToHandleForKey;
         private readonly TaskCompletionSource _completedSource;
         private bool _completed;
 
-        public MessagesByKey()
+        /// <summary>
+        /// Creates a new instance of <see cref="MessagesByKey{TKey,TValue}"/>
+        /// </summary>
+        /// <param name="cancellationToken">When the token is cancelled, no more messages will be processed</param>
+        public MessagesByKey(CancellationToken cancellationToken)
         {
+            this._cancellationToken = cancellationToken;
             this._messagesToHandleForKey = new();
             this._completedSource = new();
             this.Completion = this._completedSource.Task;
+        }
+
+        public object GetStats()
+        {
+            lock (this._messagesToHandleForKey)
+            {
+                return new
+                {
+                    MessageCountsByKey = this._messagesToHandleForKey.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Count ?? 0)
+                };
+            }
         }
 
         /// <summary>
@@ -33,6 +52,11 @@ namespace Parallafka
             this._completed = true;
             lock (this._messagesToHandleForKey)
             {
+                if (this._cancellationToken.IsCancellationRequested)
+                {
+                    this._messagesToHandleForKey.Clear();
+                }
+
                 if (this._messagesToHandleForKey.Count == 0)
                 {
                     this._completedSource.TrySetResult();
@@ -43,7 +67,7 @@ namespace Parallafka
         /// <summary>
         /// A task that is completed when the instance is finished processing
         /// </summary>
-        public Task Completion { get; private set; }
+        public Task Completion { get; }
         
         /// <summary>
         /// Given a message, attempts to return another message to handle for the same message key
@@ -51,11 +75,24 @@ namespace Parallafka
         /// <param name="message">The message that was handled</param>
         /// <param name="nextMessage">The next message that should be handled</param>
         /// <returns>True if a nextMessage was found</returns>
-        public bool TryGetNextMessageToHandle(IKafkaMessage<TKey, TValue> message, [NotNullWhen(true)] out IKafkaMessage<TKey, TValue> nextMessage)
+        public bool TryGetNextMessageToHandle(KafkaMessageWrapped<TKey, TValue> message, [NotNullWhen(true)] out KafkaMessageWrapped<TKey, TValue> nextMessage)
         {
             lock (this._messagesToHandleForKey)
             {
-                if (!this._messagesToHandleForKey.TryGetValue(message.Key, out var messagesQueuedForKey))
+                if (this._cancellationToken.IsCancellationRequested)
+                {
+                    this._messagesToHandleForKey.Clear();
+
+                    if (this._completed)
+                    {
+                        this._completedSource.TrySetResult();
+                    }
+
+                    nextMessage = null;
+                    return false;
+                }
+
+                if (!this._messagesToHandleForKey.TryGetValue(message.Key, out Queue<KafkaMessageWrapped<TKey, TValue>> messagesQueuedForKey))
                 {
                     // shouldn't happen
                     nextMessage = null;
@@ -92,17 +129,22 @@ namespace Parallafka
         /// </summary>
         /// <param name="message"></param>
         /// <returns></returns>
-        public bool TryAddMessageToHandle(IKafkaMessage<TKey, TValue> message)
+        public bool TryAddMessageToHandle(KafkaMessageWrapped<TKey, TValue> message)
         {
             lock (this._messagesToHandleForKey)
             {
+                if (this._cancellationToken.IsCancellationRequested)
+                {
+                    return false;
+                }
+
                 var aMessageWithThisKeyIsCurrentlyBeingHandled = this._messagesToHandleForKey.TryGetValue(message.Key, out var messagesToHandleForKey);
 
                 if (aMessageWithThisKeyIsCurrentlyBeingHandled)
                 {
                     if (messagesToHandleForKey == null)
                     {
-                        messagesToHandleForKey = new Queue<IKafkaMessage<TKey, TValue>>();
+                        messagesToHandleForKey = new Queue<KafkaMessageWrapped<TKey, TValue>>();
                         this._messagesToHandleForKey[message.Key] = messagesToHandleForKey;
                     }
 

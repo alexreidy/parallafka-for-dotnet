@@ -1,4 +1,3 @@
-using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Confluent.Kafka;
@@ -42,28 +41,21 @@ namespace Parallafka.Adapters.ConfluentKafka
         {
             await Task.Yield();
             ConsumeResult<TKey, TValue> result;
-            try
+
+            for (;;)
             {
-                do
+                result = this._confluentConsumer.Consume(cancellationToken);
+                if (result.IsPartitionEOF)
                 {
-                    result = this._confluentConsumer.Consume(cancellationToken);
-                    if (result.IsPartitionEOF)
-                    {
-                        await Task.Delay(50);
-                    }
-                    else
-                    {
-                        break;
-                    }
+                    await Task.Delay(50, cancellationToken);
                 }
-                while (!cancellationToken.IsCancellationRequested);
-            }
-            catch (OperationCanceledException)
-            {
-                return null;
+                else
+                {
+                    break;
+                }
             }
 
-            IKafkaMessage<TKey, TValue> msg = new KafkaMessage<TKey, TValue>(
+            IKafkaMessage<TKey, TValue> msg = KafkaMessage.Create(
                 result.Message.Key,
                 result.Message.Value,
                 new RecordOffset(result.Partition, result.Offset));

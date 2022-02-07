@@ -3,9 +3,10 @@ using Microsoft.Extensions.Logging;
 
 namespace Parallafka
 {
-    public class ParallafkaConfig<TKey, TValue> : IParallafkaConfig<TKey, TValue>
+    public class ParallafkaConfig<TKey, TValue> : IParallafkaConfig
     {
         /// <inheritdoc />
+        /// <remarks>Defaults to 3</remarks>
         public int MaxDegreeOfParallelism { get; set; } = 3;
 
         /// <inheritdoc />
@@ -14,9 +15,10 @@ namespace Parallafka
                 .CreateLogger<IParallafka<TKey, TValue>>();
 
         /// <inheritdoc />
-        public TimeSpan? CommitDelay { get; set; } = null;
+        /// <remarks>Defaults to 5 seconds</remarks>
+        public TimeSpan CommitDelay { get; set; } = TimeSpan.FromSeconds(5);
 
         /// <inheritdoc />
-        public int? MaxQueuedMessages { get; set; } = null;
+        public int MaxQueuedMessages { get; set; } = 1_000;
     }
 }

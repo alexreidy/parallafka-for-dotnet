@@ -35,7 +35,7 @@ namespace Parallafka.Tests.Commits
                 var consumed = new ConcurrentQueue<IKafkaMessage<string, string>>();
                 var firstPartitionMsgsConsumed = new ConcurrentQueue<IKafkaMessage<string, string>>();
                 TaskCompletionSource hangEarlyMsgTcs = new();
-                CancellationTokenSource stopConsuming = new CancellationTokenSource();
+                using CancellationTokenSource stopConsuming = new CancellationTokenSource();
                 Task consumeTask = parallafka.ConsumeAsync(async msg =>
                 {
                     await Task.Delay(StaticRandom.Use(r => r.Next(25)));

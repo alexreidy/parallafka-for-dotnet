@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Threading.Tasks.Dataflow;
@@ -10,14 +11,15 @@ namespace Parallafka
     public class Parallafka<TKey, TValue> : IParallafka<TKey, TValue>
     {
         private readonly IKafkaConsumer<TKey, TValue> _consumer;
-        private readonly IParallafkaConfig<TKey, TValue> _config;
+        private readonly IParallafkaConfig _config;
         private readonly ILogger _logger;
+        private Func<object> _getStats;
 
         public static Action<string> WriteLine { get; set; } = (string s) => { };
 
         public Parallafka(
             IKafkaConsumer<TKey, TValue> consumer,
-            IParallafkaConfig<TKey, TValue> config)
+            IParallafkaConfig config)
         {
             this._consumer = consumer;
             this._config = config;
@@ -26,19 +28,37 @@ namespace Parallafka
             // TODO: Configurable caps, good defaults.
         }
 
+        public object GetStats()
+        {
+            var gs = _getStats;
+            if (gs == null)
+            {
+                return new { };
+            }
+
+            return gs();
+        }
+
+        /// <inheritdoc />
         public async Task ConsumeAsync(
             Func<IKafkaMessage<TKey, TValue>, Task> messageHandlerAsync,
             CancellationToken stopToken)
         {
-            var maxQueuedMessages = this._config.MaxQueuedMessages ?? 1000;
+            var runtime = Stopwatch.StartNew();
+            var maxQueuedMessages = this._config.MaxQueuedMessages;
             // Are there any deadlocks or performance issues with these caps in general?
-            var localStop = new CancellationTokenSource();
-            var commitState = new CommitState<TKey, TValue>(maxQueuedMessages, localStop.Token);
-            var messagesByKey = new MessagesByKey<TKey, TValue>();
+            using var localStop = new CancellationTokenSource();
+            var localStopToken = localStop.Token;
+
+            var commitState = new CommitState<TKey, TValue>(
+                maxQueuedMessages,
+                localStopToken);
+
+            var messagesByKey = new MessagesByKey<TKey, TValue>(stopToken);
 
             // the message router ensures messages are handled by key in order
-            var router = new MessageRouter<TKey, TValue>(commitState, messagesByKey, localStop.Token);
-            var routingTarget = new ActionBlock<IKafkaMessage<TKey, TValue>>(router.RouteMessage,
+            var router = new MessageRouter<TKey, TValue>(commitState, messagesByKey, stopToken);
+            var routingTarget = new ActionBlock<KafkaMessageWrapped<TKey, TValue>>(router.RouteMessage,
                 new ExecutionDataflowBlockOptions
                 {
                     BoundedCapacity = 1,
@@ -51,11 +71,11 @@ namespace Parallafka
             var handler = new MessageHandler<TKey, TValue>(
                 messageHandlerAsync,
                 this._logger,
-                localStop.Token);
-            var handlerTarget = new ActionBlock<IKafkaMessage<TKey, TValue>>(handler.HandleMessage,
+                localStopToken);
+            var handlerTarget = new ActionBlock<KafkaMessageWrapped<TKey, TValue>>(handler.HandleMessage,
                 new ExecutionDataflowBlockOptions
                 {
-                    BoundedCapacity = maxQueuedMessages,
+                    BoundedCapacity = Math.Max(maxQueuedMessages, this._config.MaxDegreeOfParallelism),
                     MaxDegreeOfParallelism = this._config.MaxDegreeOfParallelism
                 });
 
@@ -63,15 +83,14 @@ namespace Parallafka
             var committer = new MessageCommitter<TKey, TValue>(
                 this._consumer, 
                 commitState, 
-                this._logger, 
-                this._config.CommitDelay ?? TimeSpan.FromSeconds(5), 
-                localStop.Token);
-            var committerTarget = new ActionBlock<IKafkaMessage<TKey, TValue>>(m => committer.CommitNow(),
-                new ExecutionDataflowBlockOptions
-                {
-                    BoundedCapacity = 100,
-                    MaxDegreeOfParallelism = 1
-                });
+                this._logger);
+
+            var commitPoller = new CommitPoller(committer);
+
+            commitState.OnMessageQueueFull += (sender, args) =>
+            {
+                commitPoller.CommitNow();
+            };
 
             router.MessagesToHandle.LinkTo(handlerTarget);
             finishedRouter.MessagesToHandle.LinkTo(handlerTarget);
@@ -79,95 +98,146 @@ namespace Parallafka
             // handled messages are sent to both:
             // . the finished router (send the next message for the key)
             // . the committer
-            var messageHandledTarget = new ActionBlock<IKafkaMessage<TKey, TValue>>(
-                m => Task.WhenAll(
-                    finishedRouter.MessageHandlerFinished(m),
-                    committerTarget.SendAsync(m)),
+            var messageHandledTarget = new ActionBlock<KafkaMessageWrapped<TKey, TValue>>(
+                m =>
+                {
+                    commitPoller.CommitWithin(this._config.CommitDelay);
+                    return finishedRouter.MessageHandlerFinished(m);
+                },
                 new ExecutionDataflowBlockOptions
                 {
                     BoundedCapacity = 1000
                 });
             handler.MessageHandled.LinkTo(messageHandledTarget);
 
+            var state = "Polling for Kafka messages";
+            this._getStats = () =>
+                new
+                {
+                    ConsumerState = state,
+                    MaxQueuedMessages = maxQueuedMessages,
+                    CallDuration = runtime.Elapsed.ToString("g"),
+                    CallDurationMs = runtime.ElapsedMilliseconds,
+                    CommitState = commitState.GetStats(),
+                    MessagesByKey = messagesByKey.GetStats(),
+                    Router = router.GetStats(),
+                    RoutingTarget = new
+                    {
+                        routingTarget.InputCount,
+                        TaskStatus = routingTarget.Completion.Status.ToString()
+                    },
+                    FinishedRouter = finishedRouter.GetStats(),
+                    Handler = handler.GetStats(),
+                    HandlerTarget = new
+                    {
+                        handlerTarget.InputCount,
+                        TaskStatus = handlerTarget.Completion.Status.ToString()
+                    },
+                    Committer = committer.GetStats(),
+                    CommitPoller = commitPoller.GetStats(),
+                    MessageHandledTarget = new
+                    {
+                        messageHandledTarget.InputCount,
+                        TaskStatus = messageHandledTarget.Completion.Status.ToString()
+                    }
+                };
+
             // poll kafka for messages and send them to the routingTarget
-            await this.KafkaPollerThread(routingTarget, stopToken);
+            var sent = await this.KafkaPollerThread(routingTarget, stopToken);
 
             // done polling, wait for the routingTarget to finish
+            state = "Shutdown: Awaiting message routing";
             routingTarget.Complete();
             await routingTarget.Completion;
 
             // wait for the router to finish (it should already be done)
+            state = "Shutdown: Awaiting message handler";
             router.MessagesToHandle.Complete();
             await router.MessagesToHandle.Completion;
 
             // wait for the finishedRoute to complete handling all the queued messages
             finishedRouter.Complete();
+            state = "Shutdown: Awaiting message routing completion";
             await finishedRouter.Completion;
 
             // wait for the message handler to complete (should already be done)
+            state = "Shutdown: Awaiting handler shutdown";
             handlerTarget.Complete();
             await handlerTarget.Completion;
+
+            state = "Shutdown: Awaiting handled shutdown";
             handler.MessageHandled.Complete();
             await handler.MessageHandled.Completion;
+
+            state = "Shutdown: Awaiting handled target shutdown";
             messageHandledTarget.Complete();
             await messageHandledTarget.Completion;
 
             // wait for the committer to finish
-            committerTarget.Complete();
-            await committerTarget.Completion;
-            committer.Complete();
-            await committer.Completion;
+            state = "Shutdown: Awaiting message commit poller";
+            commitPoller.Complete();
+            await commitPoller.Completion;
+
+            this._getStats = null;
 
             // commitState should be empty
-            WriteLine($"ConsumeFinished: {commitState.GetStats()}");
+            WriteLine("ConsumeFinished");
         }
         
-        private async Task KafkaPollerThread(ITargetBlock<IKafkaMessage<TKey, TValue>> routingTarget, CancellationToken stopToken)
+        private async Task<int> KafkaPollerThread(ITargetBlock<KafkaMessageWrapped<TKey, TValue>> routingTarget, CancellationToken stopToken)
         {
+            int? delay = null;
+
+            int sent = 0;
+
             try
             {
-                while (!stopToken.IsCancellationRequested)
+                for(;;)
                 {
                     // TODO: Error handling
                     try
                     {
+                        if (delay.HasValue)
+                        {
+                            await Task.Delay(delay.Value, stopToken);
+                            delay = null;
+                        }
+
                         IKafkaMessage<TKey, TValue> message = await this._consumer.PollAsync(stopToken);
                         if (message == null)
                         {
-                            if (!stopToken.IsCancellationRequested)
-                            {
-                                this._logger.LogWarning(
-                                    "Polled a null message while not shutting down: breach of IKafkaConsumer contract");
-                                await Task.Delay(50);
-                            }
+                            stopToken.ThrowIfCancellationRequested();
+                            this._logger.LogWarning("Polled a null message while not shutting down: breach of IKafkaConsumer contract");
+                            delay = 50;
                         }
                         else
                         {
-                            try
-                            {
-                                WriteLine($"Poller: Sending {message.Key} {message.Offset}");
-                                await routingTarget.SendAsync(message, stopToken);
-                                WriteLine($"Poller: Sent {message.Key} {message.Offset}");
-                            }
-                            catch (OperationCanceledException)
-                            {
-                                break;
-                            }
+                            WriteLine($"Poller: Sending {message.Key} {message.Offset}");
+                            await routingTarget.SendAsync(message.Wrapped(), stopToken);
+                            sent++;
+                            WriteLine($"Poller: Sent {message.Key} {message.Offset}");
                         }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
                     }
                     catch (Exception e)
                     {
                         this._logger.LogError(e, "Error in Kafka poller thread");
-                        await Task.Delay(333);
+                        delay = 333;
                     }
                 }
+            }
+            catch (OperationCanceledException)
+            {
             }
             catch (Exception e)
             {
                 this._logger.LogCritical(e, "Fatal error in Kafka poller thread");
             }
+
+            return sent;
         }
-
-
     }
 }
