@@ -23,7 +23,7 @@ namespace Parallafka.Tests
             // given
             using var stop = new CancellationTokenSource();
             var stopToken = stop.Token;
-            using var giveUp = new CancellationTokenSource(TimeSpan.FromSeconds(300000));
+            using var giveUp = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             var countTotalMessages = maxMessagesQueued * 2;
             var testCases = new TestCases(partitions, countTotalMessages);
             var consumer = new TestConsumer<string, string>(testCases.Messages);
