@@ -11,7 +11,6 @@ namespace Parallafka
         private readonly BufferBlock<KafkaMessageWrapped<TKey, TValue>> _messagesToHandle;
 
         private long _messagesHandled;
-        private long _messagesSkipped;
         private long _messagesSent;
         private long _messagesNotSent;
 
@@ -35,8 +34,7 @@ namespace Parallafka
                 InputCount = this._messagesToHandle.Count,
                 MessagesHandled = this._messagesHandled,
                 MessagesSent = this._messagesSent,
-                MessagesNotSent = this._messagesNotSent,
-                MessagesSkipped = this._messagesSkipped
+                MessagesNotSent = this._messagesNotSent
             };
         }
 
@@ -61,10 +59,6 @@ namespace Parallafka
                     Interlocked.Increment(ref this._messagesNotSent);
                     Parallafka<TKey, TValue>.WriteLine($"MFR: {newMessage.Key} {newMessage.Offset} SendAsync failed!");
                 }
-            }
-            else
-            {
-                Interlocked.Increment(ref this._messagesSkipped);
             }
         }
 
