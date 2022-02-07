@@ -125,7 +125,8 @@ namespace Parallafka.Tests
             this._poller.Complete();
             await this._poller.Completion;
 
-            Assert.False(this._poller.CommitWithin(TimeSpan.FromSeconds(1)));
+            Assert.False(this._poller.CommitWithin(TimeSpan.FromSeconds(0.5)));
+            await Task.Delay(TimeSpan.FromSeconds(1));
 
             // then
             this._committer.Verify(m => m.CommitNow(It.IsAny<CancellationToken>()), Times.Never);
